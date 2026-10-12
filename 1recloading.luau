@@ -2043,7 +2043,12 @@ elseif ids.Dungeon then
 				and not NutcrackerAnims
 			then
 				local m1Distance = 10
-				if Npc:GetAttribute("RealName") == "Kramprus" then
+				local isVera = string.find(Npc.Name, "Vera", 1, true) ~= nil
+				if isVera then
+					-- quest5 style: let the hover engine fly to and follow Vera instead of
+					-- tween-teleporting next to her and only hovering inside 10 studs
+					m1Distance = 45
+				elseif Npc:GetAttribute("RealName") == "Kramprus" then
 					m1Distance = 15
 				elseif Npc:GetAttribute("RealName") == "Elo The Bunny" then
 					m1Distance = 20
@@ -2058,7 +2063,10 @@ elseif ids.Dungeon then
 						local offset = Vector3.new(0, 6, 3)
 						local safeYoffset = 20
 						local weaponStyle = Npc:FindFirstChild("Info") and Npc.Info:FindFirstChild("Weapon")
-						if Npc:GetAttribute("RealName") == "Elo The Bunny" then
+						if isVera then
+							offset = Vector3.new(0, 9, 0)
+							safeYoffset = 20
+						elseif Npc:GetAttribute("RealName") == "Elo The Bunny" then
 							offset = Vector3.new(0, 10, 6)
 							safeYoffset = 20
 						elseif
@@ -4568,7 +4576,7 @@ elseif ids.Dungeon then
 		local AGGRO_TIMEOUT = CFG.AggroTimeout or 12
 		local BASE_SPEED = CFG.HoverSpeed or 45
 		local ARRIVE_THRESHOLD = 2.5
-		local LEASE = 0.6
+		local LEASE = 1.5
 
 		ZQ5 = ZQ5 or {}
 		ZQ5.enemy = nil
@@ -5077,15 +5085,22 @@ elseif ids.Dungeon then
 			if not enemy or not enemy:FindFirstChild("HumanoidRootPart") then
 				return false
 			end
-			if MovementSystem:IsLocked() or EloAnims then
+			local function why(reason)
+				if string.find(enemy.Name, "Vera", 1, true) and tick() - (ZQ5.lastWhy or 0) > 2 then
+					ZQ5.lastWhy = tick()
+					print("[m1Attack] refused on " .. enemy.Name .. ": " .. reason)
+				end
 				return false
+			end
+			if MovementSystem:IsLocked() or EloAnims then
+				return why("movement locked / elo anim")
 			end
 			local enemyHumanoid = enemy:FindFirstChild("Humanoid")
 			if not enemyHumanoid or enemyHumanoid.Health <= 0 then
-				return false
+				return why("no humanoid / dead")
 			end
 			if not Character or not PlayerHumpart or not CanFarm then
-				return false
+				return why("no character / CanFarm off")
 			end
 
 			upkeep()
