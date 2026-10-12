@@ -4760,6 +4760,12 @@ elseif ids.Dungeon then
 			if not model then
 				return false
 			end
+			-- Vera (and bosses) block almost constantly; feinting on every block meant a
+			-- fake swing every 5s and no damage at all, so always swing for real
+			if string.find(model.Name, "Vera", 1, true) or model:GetAttribute("HPScaled") then
+				feintState[model] = nil
+				return false
+			end
 			local blocking = targetBlocking(model)
 			if not blocking then
 				feintState[model] = nil
@@ -4779,7 +4785,8 @@ elseif ids.Dungeon then
 		local function pickAttackTarget(list)
 			for _, part in ipairs(list) do
 				if part and part.Parent then
-					if FEINT_ON_BLOCK or not targetBlocking(part.Parent) then
+					local boss = string.find(part.Parent.Name, "Vera", 1, true) or part.Parent:GetAttribute("HPScaled")
+					if FEINT_ON_BLOCK or boss or not targetBlocking(part.Parent) then
 						return part
 					end
 				end
@@ -5516,7 +5523,10 @@ elseif ids.Dungeon then
 	spawn(function()
 		while task.wait(0.3) do
 			pcall(function()
-				SetBlocking(true)
+				-- never hold our own block while the m1 loop is swinging: it kept the character
+				-- in block stance and the swings never landed
+				local swinging = ZQ5 and ZQ5.attack and ZQ5.enemy ~= nil and tick() - ZQ5.lease < 1
+				SetBlocking(not swinging)
 			end)
 		end
 	end)
