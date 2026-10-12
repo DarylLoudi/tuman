@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "potassium": {
+      "type": "http",
+      "url": "https://fig-knight-behind-retro.trycloudflare.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${POTASSIUM_TOKEN}"
+      }
+    }
+  }
+}
