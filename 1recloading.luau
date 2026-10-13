@@ -2298,6 +2298,7 @@ elseif ids.Dungeon then
 				and not NutcrackerAnims
 			then
 				local m1Distance = 10
+				local alreadyOnIt = ZQ5 and ZQ5.hoverActive and ZQ5.enemy == Npc
 				local isVera = string.find(Npc.Name, "Vera", 1, true) ~= nil
 				if isVera then
 					-- quest5 style: let the hover engine fly to and follow Vera instead of
@@ -2309,6 +2310,9 @@ elseif ids.Dungeon then
 					m1Distance = 20
 				elseif Npc:FindFirstChild("RaiuiSword") or Npc:GetAttribute("RealName") == "Kelvin, The Nutcracker" then
 					m1Distance = 15
+				end
+				if alreadyOnIt then
+					m1Distance = math.max(m1Distance, 45)
 				end
 
 				if GetMagnitudeIgnoringY(Npc.HumanoidRootPart.Position) < m1Distance then
@@ -4201,6 +4205,11 @@ elseif ids.Dungeon then
 				st.reason = "nohrp"
 				return
 			end
+			for _, mover in ipairs(h:GetChildren()) do
+				if mover:IsA("BodyMover") then
+					mover:Destroy()
+				end
+			end
 			if st.paused then
 				h.AssemblyLinearVelocity = Vector3.zero
 				return
@@ -5474,13 +5483,12 @@ elseif ids.Dungeon then
 				end
 
 				ZQ5.hoverActive = true
-				local old = hrp:FindFirstChild("HoverBodyVelocity")
-				if old then
-					old:Destroy()
-				end
-				local stale = hrp:FindFirstChild("BodyVelocity")
-				if stale then
-					stale:Destroy()
+				-- the pad carries us: any BodyMover (the game's knockback, old hover movers,
+				-- the idle BodyVelocity) only fights the pin
+				for _, mover in ipairs(hrp:GetChildren()) do
+					if mover:IsA("BodyMover") then
+						mover:Destroy()
+					end
 				end
 
 				local pad = ZQ5.hoverPad
@@ -5498,7 +5506,14 @@ elseif ids.Dungeon then
 
 				local standAt = pad.Position + Vector3.new(0, HOVER_PAD_STAND, 0)
 
-				local targetPos = hoverPointFor(mob)
+				-- aim where a running mob WILL be (0.3s ahead, flat), so the pad keeps up with
+				-- fleeing / kiting mobs instead of trailing behind them
+				local mv = mhrp.AssemblyLinearVelocity
+				local lead = Vector3.new(mv.X, 0, mv.Z) * 0.3
+				if lead.Magnitude > 12 then
+					lead = lead.Unit * 12
+				end
+				local targetPos = hoverPointFor(mob) + lead
 				local goal = targetPos - Vector3.new(0, HOVER_PAD_STAND, 0)
 				local toGoal = goal - pad.Position
 				if toGoal.Magnitude > 0.05 then
