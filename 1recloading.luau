@@ -2005,6 +2005,47 @@ elseif ids.Dungeon then
 		end)
 	end
 
+	-- GROUND RESCUE: the game now drops us at Y=2072 on Floor 1, which is the TOP of its floor slab
+	-- (the script's steps assume +3 above it), and noclip is always on, so we sank into the slab and
+	-- the noclip anticheat fired. If our root part is inside a solid island part whose top is just
+	-- above us, lift us onto that top.
+	do
+		local overlap = OverlapParams.new()
+		overlap.FilterType = Enum.RaycastFilterType.Include
+		local lastRescue = 0
+		Services.RunService.Heartbeat:Connect(function()
+			pcall(function()
+				local h = PlayerHumpart
+				if not h or not h.Parent or tick() - lastRescue < 1 then
+					return
+				end
+				if ZQ5 and (ZQ5.moving or ZQ5.hoverActive) then
+					return
+				end
+				local islands = workspace:FindFirstChild("Islands")
+				if not islands then
+					return
+				end
+				overlap.FilterDescendantsInstances = { islands }
+				local bestRise
+				for _, part in ipairs(workspace:GetPartBoundsInRadius(h.Position, 1.5, overlap)) do
+					if part.CanCollide and math.abs(part.CFrame.UpVector.Y) > 0.99 then
+						local rise = part.Position.Y + part.Size.Y / 2 - h.Position.Y
+						if rise > 0 and rise <= 14 and (not bestRise or rise > bestRise) then
+							bestRise = rise
+						end
+					end
+				end
+				if bestRise then
+					lastRescue = tick()
+					print(string.format("[RESCUE] inside floor at %s, lifting %.1f studs", tostring(h.Position), bestRise + 3.2))
+					h.CFrame = h.CFrame + Vector3.new(0, bestRise + 3.2, 0)
+					h.AssemblyLinearVelocity = Vector3.zero
+				end
+			end)
+		end)
+	end
+
 	local LastInstantTP = 0
 	local INSTANT_TP_COOLDOWN = 3
 	local INSTANT_TP_LONG_DISTANCE = 1200
