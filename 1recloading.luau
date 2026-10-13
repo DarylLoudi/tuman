@@ -2186,6 +2186,44 @@ elseif ids.Dungeon then
 		end)
 	end
 
+	-- RECOVER AFTER A HIT: a hit can leave the humanoid in Physics / Ragdoll / FallingDown (we
+	-- delete the game's Ragdoll_Client, which normally gets us up). With no move or hover holding
+	-- the body it then sank slowly into the floor. Stand back up.
+	task.spawn(function()
+		local downSince = nil
+		while true do
+			task.wait(0.25)
+			pcall(function()
+				local hum = Character and Character:FindFirstChildOfClass("Humanoid")
+				if not hum or (ZQ5 and (ZQ5.moving or ZQ5.hoverActive or ZQ5.rescuing)) then
+					downSince = nil
+					return
+				end
+				local st = hum:GetState()
+				local down = st == Enum.HumanoidStateType.Physics
+					or st == Enum.HumanoidStateType.Ragdoll
+					or st == Enum.HumanoidStateType.FallingDown
+					or hum.PlatformStand
+				if not down then
+					downSince = nil
+					return
+				end
+				downSince = downSince or tick()
+				if tick() - downSince > 0.75 then
+					downSince = nil
+					hum.PlatformStand = false
+					for _, v in pairs(Character:GetChildren()) do
+						if (v.Name == "HumanoidRootPart" or v.Name == "Head" or v.Name == "Torso" or v.Name == "UpperTorso" or v.Name == "LowerTorso") and v:IsA("BasePart") then
+							v.CanCollide = true
+						end
+					end
+					hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+					print("[RECOVER] knocked down with nothing holding us - getting up")
+				end
+			end)
+		end
+	end)
+
 	-- STATE LOG (every 2s): what holds us and what the script thinks it is doing
 	task.spawn(function()
 		while true do
@@ -2873,6 +2911,10 @@ elseif ids.Dungeon then
 		-- Main chest opening loop - continues until we have BOTH spirit essence AND a weapon (or no chests left)
 		repeat
 			task.wait(0.1)
+
+			if Character:FindFirstChild("Cuffed") then
+				return -- handcuffed: the key step comes first
+			end
 
 			if Backpack:FindFirstChild("SP Reset Essence") or Character:FindFirstChild("SP Reset Essence") then
 				eatSpResetEssence()
@@ -6525,6 +6567,15 @@ elseif ids.Dungeon then
 						and workspace.Islands[floortocheckforinvisiblepart]:FindFirstChild("invisible")
 					then
 						workspace.Islands[floortocheckforinvisiblepart].invisible:Destroy()
+					end
+
+					-- the cuffs can arrive a moment after we land on Floor 1; going to the chests
+					-- before they show up skipped the key step
+					if not Character:FindFirstChild("Cuffed") then
+						ZQ5.floor1Since = ZQ5.floor1Since or tick()
+						if tick() - ZQ5.floor1Since < 6 then
+							return
+						end
 					end
 
 					if Character:FindFirstChild("Cuffed") then
