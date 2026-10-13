@@ -1807,9 +1807,10 @@ elseif ids.Dungeon then
 
 	local COLLIDE_PARTS = { HumanoidRootPart = true, Head = true, Torso = true, UpperTorso = true, LowerTorso = true }
 
-	-- NOCLIP OFF (your call): our body parts always collide. true = noclip only while travelling
-	-- or hovering, collisions back on when idle.
-	local NOCLIP_ENABLED = false
+	-- NOCLIP: on only while travelling/hovering, collisions back on when idle. Turning it fully
+	-- off (false) made moves collide with Floor 1's trees: the key sits by a tree, the move got
+	-- stuck, and every stuck hop pad-rose 40 studs, climbing to Y 2380 and earning flight strikes.
+	local NOCLIP_ENABLED = true
 	function noClip(Value)
 		if noClipConnection then
 			noClipConnection:Disconnect()
@@ -1830,6 +1831,16 @@ elseif ids.Dungeon then
 			noClipConnection = Services.RunService.Stepped:Connect(function()
 				pcall(function()
 					local idle = not (ZQ5 and (ZQ5.moving or ZQ5.hoverActive or ZQ5.rescuing))
+					-- the maze (Floor 1): never noclip -- body always collides
+					local islands = workspace:FindFirstChild("Islands")
+					if
+						not (ZQ5 and ZQ5.leverMode)
+						and islands
+						and islands:FindFirstChild("Impel Base - Floor 1")
+						and not islands:FindFirstChild("Impel Base - Floor 2")
+					then
+						idle = true
+					end
 					for i, v in pairs(LocalPlayer.Character:GetChildren()) do
 						if v.ClassName == "Part" or v.ClassName == "MeshPart" then
 							if not idle then
@@ -4326,22 +4337,14 @@ elseif ids.Dungeon then
 	ZQ5.straight = false
 	local stuckPos, stuckSince = nil, 0
 
-	-- where the stuck -> straight-line fallback is allowed: the Floor 1 maze and Floor 2
-	-- (the boss-gate lever sits in a lower room behind a doorway the navmesh does not connect)
-	local ALLOW_STRAIGHT_FALLBACK = false -- off: no straight lines through walls (no noclip)
+	-- the stuck -> straight-line fallback is allowed ONLY while walking to the Floor 2 boss-gate
+	-- lever (ZQ5.leverMode); never in the maze
 	local function inMaze()
-		local islands = workspace:FindFirstChild("Islands")
-		if not ALLOW_STRAIGHT_FALLBACK or not islands then
-			return false
-		end
-		local f1 = islands:FindFirstChild("Impel Base - Floor 1")
-		local f2 = islands:FindFirstChild("Impel Base - Floor 2")
-		local f3 = islands:FindFirstChild("Impel Base - Floor 3")
-		return (f1 and not f2) or (f2 and not f3)
+		return ZQ5.leverMode == true
 	end
 
 	local function straightThrough(dest, poll, why)
-		print(string.format("[WALK] stuck (%s) at %s, going straight to %s", why, tostring(PlayerHumpart.Position), tostring(dest)))
+		print(string.format("[WALK] lever: stuck (%s) at %s, going straight to %s", why, tostring(PlayerHumpart.Position), tostring(dest)))
 		ZQ5.straight = true
 		local ok, reason = ZQ5.move(dest, WALK_SPEED, { poll = poll })
 		ZQ5.straight = false
@@ -7003,7 +7006,9 @@ elseif ids.Dungeon then
 						local Time = GetTime(Distance, Spood or Speed)
 						wait()
 						local targetCFrame = CFrame.new(targetPosition)
-						tweenWithTeleport(targetCFrame, Speed, selected_Offset)
+						ZQ5.leverMode = true -- noclip + stuck -> straight line allowed for this walk only
+						pcall(tweenWithTeleport, targetCFrame, Speed, selected_Offset)
+						ZQ5.leverMode = false
 
 						wait(1)
 						if
