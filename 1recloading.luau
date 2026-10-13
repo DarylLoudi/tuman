@@ -2017,80 +2017,94 @@ elseif ids.Dungeon then
 		end)
 	end
 
-	-- GROUND RESCUE: the game drops us at Y=2072 on Floor 1, which is the TOP of its floor slab
-	-- (the script's steps assume +3 above it). If our root part is inside a solid island part whose
-	-- top is just above us, float up onto that top with the hover engine's BodyVelocity logic
-	-- (proportional speed toward the point, noclip on meanwhile) instead of teleporting.
+	-- GROUND RESCUE / PAD RISE: the game drops us at Y=2072 on Floor 1, which is the TOP of its
+	-- floor slab (the script's steps assume +3 above it), and the noclip anticheat recovery used
+	-- to teleport us up. Both now use the boss-farm "pad" lift (BossRotation hoverStep): an
+	-- anchored CanCollide pad is made under the root and walked up at PAD_SPEED while the root
+	-- CFrame is pinned to it every frame -- no velocity writes, no instant teleport.
 	do
+		ZQ5 = ZQ5 or {}
+		local PAD_SIZE, PAD_STAND, PAD_SPEED = 24, 4, 25
 		local overlap = OverlapParams.new()
 		overlap.FilterType = Enum.RaycastFilterType.Include
-		local rescueTargetY = nil
-		local rescueStart = 0
-		local function stopRescue(h)
-			ZQ5.rescuing = false
-			rescueTargetY = nil
-			local bv = h and h:FindFirstChild("RescueBodyVelocity")
-			if bv then
-				bv:Destroy()
+		local busy = false
+
+		-- how far up the nearest solid island part's top is, when the root is inside it
+		local function scanRise()
+			local h = PlayerHumpart
+			local islands = workspace:FindFirstChild("Islands")
+			if not h or not islands then
+				return nil
 			end
+			overlap.FilterDescendantsInstances = { islands }
+			local bestRise
+			for _, part in ipairs(workspace:GetPartBoundsInRadius(h.Position, 1.5, overlap)) do
+				if part.CanCollide and math.abs(part.CFrame.UpVector.Y) > 0.99 then
+					local rise = part.Position.Y + part.Size.Y / 2 - h.Position.Y
+					if rise > 0 and rise <= 14 and (not bestRise or rise > bestRise) then
+						bestRise = rise
+					end
+				end
+			end
+			return bestRise
 		end
+
+		-- blocking: ride a pad up `dy` studs, then remove it
+		function PadRise(dy)
+			local h = PlayerHumpart
+			if busy or not h or not h.Parent then
+				return
+			end
+			busy = true
+			ZQ5.rescuing = true
+			local pad = Instance.new("Part")
+			pad.Name = "pad"
+			pad.Size = Vector3.new(PAD_SIZE, 1, PAD_SIZE)
+			pad.Anchored = true
+			pad.CanCollide = true
+			pad.Transparency = 1
+			pad.Position = h.Position - Vector3.new(0, PAD_STAND, 0)
+			pad.Parent = workspace
+			local stale = h:FindFirstChild("BodyVelocity")
+			if stale then
+				stale:Destroy()
+			end
+			local goalY = pad.Position.Y + dy
+			local deadline = os.clock() + dy / PAD_SPEED + 5
+			pcall(function()
+				while pad.Position.Y < goalY - 0.05 and os.clock() < deadline do
+					local dt = Services.RunService.Heartbeat:Wait()
+					h = PlayerHumpart
+					if not h or not h.Parent then
+						break
+					end
+					pad.Position = pad.Position + Vector3.new(0, math.min(PAD_SPEED * dt, goalY - pad.Position.Y), 0)
+					h.CFrame = CFrame.new(pad.Position + Vector3.new(0, PAD_STAND, 0)) * (h.CFrame - h.CFrame.Position)
+				end
+			end)
+			pad:Destroy()
+			ZQ5.rescuing = false
+			busy = false
+		end
+
+		-- lift out of whatever we are inside (floor slab), else a small default
+		function PadRiseClear(default)
+			local rise = scanRise()
+			PadRise(rise and (rise + 3.2) or (default or 12))
+		end
+
 		Services.RunService.Heartbeat:Connect(function()
 			pcall(function()
-				local h = PlayerHumpart
-				if not h or not h.Parent then
-					rescueTargetY = nil
-					ZQ5.rescuing = false
+				if busy or not PlayerHumpart or not PlayerHumpart.Parent then
 					return
 				end
-
-				-- already floating up: same proportional BodyVelocity as the hover engine
-				if rescueTargetY then
-					if ZQ5.moving or ZQ5.hoverActive or tick() - rescueStart > 4 then
-						stopRescue(h)
-						return
-					end
-					local rise = rescueTargetY - h.Position.Y
-					if rise <= 0.3 then
-						stopRescue(h)
-						return
-					end
-					local bv = h:FindFirstChild("RescueBodyVelocity")
-					if not bv then
-						bv = Instance.new("BodyVelocity")
-						bv.Name = "RescueBodyVelocity"
-						bv.MaxForce = Vector3.new(1e9, 1e9, 1e9)
-						bv.Parent = h
-					end
-					local stale = h:FindFirstChild("BodyVelocity")
-					if stale then
-						stale:Destroy()
-					end
-					bv.Velocity = Vector3.new(0, math.min(30, math.max(rise * 12, 8)), 0)
-					return
-				end
-
 				if ZQ5.moving or ZQ5.hoverActive then
 					return
 				end
-				local islands = workspace:FindFirstChild("Islands")
-				if not islands then
-					return
-				end
-				overlap.FilterDescendantsInstances = { islands }
-				local bestRise
-				for _, part in ipairs(workspace:GetPartBoundsInRadius(h.Position, 1.5, overlap)) do
-					if part.CanCollide and math.abs(part.CFrame.UpVector.Y) > 0.99 then
-						local rise = part.Position.Y + part.Size.Y / 2 - h.Position.Y
-						if rise > 0 and rise <= 14 and (not bestRise or rise > bestRise) then
-							bestRise = rise
-						end
-					end
-				end
-				if bestRise then
-					rescueTargetY = h.Position.Y + bestRise + 3.2
-					rescueStart = tick()
-					ZQ5.rescuing = true
-					print(string.format("[RESCUE] inside floor at %s, floating up %.1f studs", tostring(h.Position), bestRise + 3.2))
+				local rise = scanRise()
+				if rise then
+					print(string.format("[RESCUE] inside floor at %s, pad-rising %.1f studs", tostring(PlayerHumpart.Position), rise + 3.2))
+					task.spawn(PadRise, rise + 3.2)
 				end
 			end)
 		end)
@@ -4445,13 +4459,7 @@ elseif ids.Dungeon then
 									-- safe height (up to 2600), which is within the instant-TP radius, so
 									-- it snapped us hundreds of studs up. Rise gently instead, the way
 									-- the tween's own up-phase would.
-									pcall(function()
-										for _ = 1, 12 do
-											PlayerHumpart.CFrame = PlayerHumpart.CFrame + Vector3.new(0, 1, 0)
-											PlayerHumpart.AssemblyLinearVelocity = Vector3.zero
-											task.wait(0.05)
-										end
-									end)
+									pcall(PadRiseClear, 12)
 								elseif acType == "tpcheck" or acType == "flycheck" then
 									pcall(function()
 										instatp(safePos)
