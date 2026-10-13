@@ -2120,7 +2120,7 @@ elseif ids.Dungeon then
 		end
 
 		-- ride a pad up dy studs, hold `hold` seconds, ride it back down, remove it
-		function PadDodge(dy, hold) -- (rides at 25 studs/s, as before; the rescue rise is slower)
+		function PadDodge(dy, hold)
 			local h = PlayerHumpart
 			if busy or not h or not h.Parent then
 				return
@@ -2136,7 +2136,7 @@ elseif ids.Dungeon then
 			pad.Position = h.Position - Vector3.new(0, PAD_STAND, 0)
 			pad.Parent = workspace
 			local function ride(goalY)
-				local deadline = os.clock() + math.abs(goalY - pad.Position.Y) / 25 + 3
+				local deadline = os.clock() + math.abs(goalY - pad.Position.Y) / PAD_SPEED + 3
 				while math.abs(pad.Position.Y - goalY) > 0.05 and os.clock() < deadline do
 					local dt = Services.RunService.Heartbeat:Wait()
 					h = PlayerHumpart
@@ -2147,7 +2147,7 @@ elseif ids.Dungeon then
 						return
 					end
 					local d = goalY - pad.Position.Y
-					pad.Position = pad.Position + Vector3.new(0, math.sign(d) * math.min(25 * dt, math.abs(d)), 0)
+					pad.Position = pad.Position + Vector3.new(0, math.sign(d) * math.min(PAD_SPEED * dt, math.abs(d)), 0)
 					h.CFrame = CFrame.new(pad.Position + Vector3.new(0, PAD_STAND, 0)) * (h.CFrame - h.CFrame.Position)
 				end
 			end
@@ -2366,8 +2366,12 @@ elseif ids.Dungeon then
 				-- horizontal only, so a mob on a ledge 90 studs overhead made the pad fly straight up
 				-- into the ceiling. Walk there instead (the path takes the stairs / ramps).
 				local dY = math.abs(Npc.HumanoidRootPart.Position.Y - PlayerHumpart.Position.Y)
-				if dY > 30 and not isVera then
+				local dodging = ZQ5 and ZQ5.dodgeMob == Npc and tick() < (ZQ5.dodgeUntil or 0)
+				if dY > 30 and not dodging and not isVera then
 					m1Distance = 0
+				end
+				if dodging then
+					m1Distance = 70 -- out on the slam dodge: stay engaged so the hover brings us back
 				end
 
 				if GetMagnitudeIgnoringY(Npc.HumanoidRootPart.Position) < m1Distance then
@@ -2381,7 +2385,7 @@ elseif ids.Dungeon then
 							offset = Vector3.new(0, 9, 0)
 							safeYoffset = 20
 						elseif Npc:GetAttribute("RealName") == "Elo The Bunny" then
-							offset = Vector3.new(0, 10, 6)
+							offset = Vector3.new(0, 10, 3) -- hover 10 studs above Elo
 							safeYoffset = 20
 						elseif
 							weaponStyle
@@ -3467,9 +3471,7 @@ elseif ids.Dungeon then
 			elseif Npc:FindFirstChild("RaiuiSword") then
 				return Npc.HumanoidRootPart.Position + Vector3.new(0, 0, 20)
 			elseif Npc:GetAttribute("RealName") == "Elo The Bunny" then
-				return Npc.HumanoidRootPart.Position
-					- (Npc.HumanoidRootPart.CFrame.LookVector * 10)
-					+ Vector3.new(0, 15, 5)
+				return Npc.HumanoidRootPart.Position - (Npc.HumanoidRootPart.CFrame.LookVector * 10)
 			elseif targetFloorPosition then
 				return targetFloorPosition + Vector3.new(0, 45, 0)
 			else
@@ -3571,6 +3573,15 @@ elseif ids.Dungeon then
 					local animationIdToCheck2 = 15246831598
 					local animationIdToCheck3 = 6647575254
 					for _, track in ipairs(playingAnimationTracks) do
+						-- log each Elo animation once, so a changed slam id shows up in the console
+						if Npc:GetAttribute("RealName") == "Elo The Bunny" then
+							EloSeenAnims = EloSeenAnims or {}
+							local aid = track.Animation.AnimationId
+							if not EloSeenAnims[aid] then
+								EloSeenAnims[aid] = true
+								print("[ELO] anim " .. aid .. " (" .. tostring(track.Name) .. ")")
+							end
+						end
 						if track.Animation.AnimationId == "rbxassetid://" .. animationIdToCheck then
 							NutcrackerAnims = true
 							Checker = true
@@ -3578,16 +3589,17 @@ elseif ids.Dungeon then
 							BlugoriAnims = false
 							Checker = true
 						elseif track.Animation.AnimationId == "rbxassetid://" .. animationIdToCheck3 then
-							EloAnims = true
+							-- Elo's slam: the hover slides far out to the side (see ELO_DODGE_*)
 							Checker = true
-							local oldYpos = PlayerHumpart.Position.Y
-							local targetY = oldYpos + 60
-							Facemouse()
-							task.wait(0.3)
-							-- was two instant CFrame writes (up 60, then back). Ride a pad up and down
-							-- instead: standing on a pad reads as grounded, so no flight strikes.
-							pcall(PadDodge, targetY - oldYpos, 1.5)
-							EloAnims = false
+							if ZQ5 then
+								if tick() > (ZQ5.dodgeUntil or 0) then
+									ZQ5.dodgeStart = tick()
+									ZQ5.dodgeDir = nil
+									print("[ELO] slam, dodging to the side")
+								end
+								ZQ5.dodgeMob = Npc
+								ZQ5.dodgeUntil = math.max(tick() + 0.5, ZQ5.dodgeStart + 2.2)
+							end
 						end
 					end
 					if not Checker then
@@ -5763,6 +5775,8 @@ elseif ids.Dungeon then
 		-- hover pushed up at 15-40 studs/s and still sat at ground height on tutorial Vera.
 		local HOVER_PAD_SPEED, HOVER_PAD_STAND = 30, 4
 		local HOVER_CLIMB_SPEED = 14 -- max studs/s up
+		-- Elo's slam has a big hitbox: slide this far to the side (at hover height) and back
+		local ELO_DODGE_DIST, ELO_DODGE_UP, ELO_DODGE_SPEED = 55, 10, 55
 		local function hoverPadStop()
 			if ZQ5.hoverPad and ZQ5.hoverPad.Parent then
 				ZQ5.hoverPad:Destroy()
@@ -5895,6 +5909,39 @@ elseif ids.Dungeon then
 				end
 				local targetPos = hoverPointFor(mob) + lead
 				local padSpeed = HOVER_PAD_SPEED
+
+				-- ELO'S SLAM: slide far out to the side at hover height (no going up), then back
+				local dodging = ZQ5.dodgeMob == mob and tick() < (ZQ5.dodgeUntil or 0)
+				if dodging then
+					if not ZQ5.dodgeDir then
+						local base = Vector3.new(standAt.X - mhrp.Position.X, 0, standAt.Z - mhrp.Position.Z)
+						if base.Magnitude < 1 then
+							local lv = mhrp.CFrame.LookVector
+							base = Vector3.new(-lv.X, 0, -lv.Z)
+						end
+						base = base.Unit
+						local dp = RaycastParams.new()
+						dp.FilterType = Enum.RaycastFilterType.Exclude
+						dp.FilterDescendantsInstances = { Character, workspace:FindFirstChild("NPCs"), workspace:FindFirstChild("Effects") }
+						pcall(function()
+							dp.RespectCanCollide = true
+						end)
+						-- the first direction with a clear run (no wall) out to the dodge distance
+						local from = mhrp.Position + Vector3.new(0, ELO_DODGE_UP, 0)
+						for _, a in ipairs({ 0, 45, -45, 90, -90, 135, -135, 180 }) do
+							local d = CFrame.Angles(0, math.rad(a), 0) * base
+							if not workspace:Raycast(from, d * (ELO_DODGE_DIST + 3), dp) then
+								ZQ5.dodgeDir = d
+								break
+							end
+						end
+						ZQ5.dodgeDir = ZQ5.dodgeDir or base
+					end
+					targetPos = mhrp.Position + ZQ5.dodgeDir * ELO_DODGE_DIST + Vector3.new(0, ELO_DODGE_UP, 0)
+					padSpeed = ELO_DODGE_SPEED
+				else
+					ZQ5.dodgeDir = nil
+				end
 
 				local goal = targetPos - Vector3.new(0, HOVER_PAD_STAND, 0)
 				local toGoal = goal - pad.Position
