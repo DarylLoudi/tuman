@@ -2208,6 +2208,35 @@ elseif ids.Dungeon then
 			lastBlockCall = currentTime
 		end
 	end
+	-- Vera: no distance gates, no tween. Hand her straight to the hover engine (quest5 style) so it
+	-- flies to a point above her and follows her; the m1 loop swings while it does.
+	local lastVeraLog = 0
+	function VeraEngage(npc)
+		if not npc or not npc:FindFirstChild("HumanoidRootPart") or not PlayerHumpart or not Character then
+			return false
+		end
+		local hum = Character:FindFirstChildOfClass("Humanoid")
+		local ok
+		if hum and hum.Health <= 300 then
+			ok = m1Attack(npc, 40, 0, Vector3.new(0, 80, 0), "Air") -- hide above, no swings
+		else
+			ok = m1Attack(npc, 20, 15, Vector3.new(0, 9, 0), "Air")
+		end
+		if tick() - lastVeraLog > 3 then
+			lastVeraLog = tick()
+			print(string.format(
+				"[VERA] m1Attack=%s dist=%.0f hp=%s hoverActive=%s hoverMob=%s attack=%s",
+				tostring(ok),
+				(PlayerHumpart.Position - npc.HumanoidRootPart.Position).Magnitude,
+				tostring(hum and math.floor(hum.Health)),
+				tostring(ZQ5 and ZQ5.hoverActive),
+				tostring(ZQ5 and ZQ5.hoverMob and ZQ5.hoverMob.Name),
+				tostring(ZQ5 and ZQ5.attack)
+			))
+		end
+		return ok
+	end
+
 	function controlTower(pos, speed)
 		if not PlayerHumpart or not Character or not CanFarm then
 			return
@@ -5305,12 +5334,13 @@ elseif ids.Dungeon then
 				local safePos = findSafePositionFromTrap(PlayerHumpart.Position)
 				tweenWithTeleport(safePos, Speed)
 				task.wait(0.5)
-				return false
+				return why("under a FallingTrap hitbox, moved to safe position")
 			end
 
 			MovementSystem:CancelInSpawn()
 
 			if checkAnticheatNotifications() then
+				why("waiting for the anticheat notification to clear")
 				repeat
 					task.wait(0.1)
 				until not checkAnticheatNotifications()
@@ -7446,7 +7476,10 @@ elseif ids.Dungeon then
 					if Npc then
 						print("NPCCCCC")
 						targetPosition = detectPart()
-						if targetPosition then
+						if string.find(Npc.Name, "Vera", 1, true) then
+							VeraEngage(Npc)
+							CanTween = true
+						elseif targetPosition then
 							controlTower(CFrame.new(targetPosition), Speed)
 							CanTween = true
 						end
