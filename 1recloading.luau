@@ -2148,36 +2148,14 @@ elseif ids.Dungeon then
 	local INSTANT_TP_LONG_DISTANCE = 1200
 	local INSTANT_TP_CLOSE_DISTANCE = 8
 
+	-- NO INSTANT TELEPORTS: instatp keeps its name (many call sites) but only ever tweens.
 	function instatp(pos)
 		if typeof(pos) == "Vector3" then
 			pos = CFrame.new(pos)
 		elseif typeof(pos) ~= "CFrame" then
 			return
 		end
-
-		local targetPos = pos.Position
-		local distance = (PlayerHumpart.Position - targetPos).Magnitude
-		local horizontalDistance = GetMagnitudeIgnoringY(targetPos)
-
-		local shouldInstantTP = false
-
-		-- só usa insta TP se estiver MUITO perto horizontalmente
-		if horizontalDistance <= INSTANT_TP_CLOSE_DISTANCE then
-			shouldInstantTP = true
-		end
-
-		-- ou se estiver MUITO longe
-		if distance >= INSTANT_TP_LONG_DISTANCE then
-			shouldInstantTP = true
-		end
-
-		-- cooldown para não spammar CFrame
-		if shouldInstantTP and tick() - LastInstantTP >= INSTANT_TP_COOLDOWN then
-			LastInstantTP = tick()
-			PlayerHumpart.CFrame = pos
-		else
-			tweenWithTeleport(pos, Speed, selected_Offset)
-		end
+		tweenWithTeleport(pos, Speed)
 	end
 
 	local yposResetClock = nil
@@ -3395,11 +3373,10 @@ elseif ids.Dungeon then
 							local targetY = oldYpos + 60
 							Facemouse()
 							task.wait(0.3)
-							PlayerHumpart.CFrame =
-								CFrame.new(PlayerHumpart.Position.X, targetY, PlayerHumpart.Position.Z)
-							task.wait(2)
-							PlayerHumpart.CFrame =
-								CFrame.new(PlayerHumpart.Position.X, oldYpos, PlayerHumpart.Position.Z)
+							-- was two instant CFrame writes (up 60, then back); tween both ways
+							ZQ5.move(Vector3.new(PlayerHumpart.Position.X, targetY, PlayerHumpart.Position.Z), 70, {})
+							task.wait(1)
+							ZQ5.move(Vector3.new(PlayerHumpart.Position.X, oldYpos, PlayerHumpart.Position.Z), 70, {})
 							EloAnims = false
 						end
 					end
@@ -4544,11 +4521,6 @@ elseif ids.Dungeon then
 								st.stuckT = 0
 								hops = hops + 1
 								if hops >= 2 then
-									pcall(function()
-										Facemouse()
-										task.wait(0.3)
-										PlayerHumpart.CFrame = targetCF
-									end)
 									return "stuck"
 								end
 								local cur = PlayerHumpart.Position
@@ -4605,13 +4577,13 @@ elseif ids.Dungeon then
 					end
 					Facemouse()
 					task.wait(0.4)
-					PlayerHumpart.CFrame = upPos
+					runPhase(upPos)
 					task.wait(0.5)
 
 					local yDiff = math.abs(PlayerHumpart.Position.Y - upPos.Position.Y)
 					if yDiff > 50 then
 						Facemouse()
-						PlayerHumpart.CFrame = upPos
+						runPhase(upPos)
 						task.wait(0.5)
 						yDiff = math.abs(PlayerHumpart.Position.Y - upPos.Position.Y)
 						if yDiff > 50 then
@@ -4677,20 +4649,20 @@ elseif ids.Dungeon then
 						if not xzPhaseSuccess then
 							Facemouse()
 							task.wait(0.3)
-							PlayerHumpart.CFrame = correctXZatOffset
+							runPhase(correctXZatOffset)
 							task.wait(0.5)
 						end
 					end
 
 					Facemouse()
 					task.wait(0.4)
-					PlayerHumpart.CFrame = downPos
+					runPhase(downPos)
 					task.wait(0.5)
 
 					local yDiff = math.abs(PlayerHumpart.Position.Y - downPos.Position.Y)
 					if yDiff > 50 then
 						Facemouse()
-						PlayerHumpart.CFrame = downPos
+						runPhase(downPos)
 						task.wait(0.5)
 						yDiff = math.abs(PlayerHumpart.Position.Y - downPos.Position.Y)
 						if yDiff > 50 then
@@ -6200,7 +6172,7 @@ elseif ids.Dungeon then
 								if distance > 5 then
 									tweenWithTeleport(CFrame.new(targetPosition), 40)
 								elseif distance > 3 then
-									PlayerHumpart.CFrame = CFrame.new(targetPosition, keyPosition)
+									ZQ5.move(targetPosition, 40, {})
 								end
 
 								PlayerHumpart.CFrame = CFrame.new(PlayerHumpart.Position, keyPosition)
