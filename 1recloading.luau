@@ -2449,6 +2449,15 @@ elseif ids.Dungeon then
 					m1Distance = 45
 				end
 
+				-- never hover-engage a mob far above / below us (another level): m1Distance is
+				-- horizontal only, so a mob on a ledge 90 studs overhead made the pad fly straight up
+				-- into the ceiling. Walk there instead (the path takes the stairs / ramps).
+				local dY = math.abs(Npc.HumanoidRootPart.Position.Y - PlayerHumpart.Position.Y)
+				local dodging = ZQ5 and ZQ5.dodgeMob == Npc and tick() < (ZQ5.dodgeUntil or 0)
+				if dY > 30 and not dodging and not isVera then
+					m1Distance = 0
+				end
+
 				if GetMagnitudeIgnoringY(Npc.HumanoidRootPart.Position) < m1Distance then
 					if Npc:GetAttribute("RealName") == "Kramprus" then
 						m1AttackSimple(Npc, m1Distance)
