@@ -2409,7 +2409,7 @@ elseif ids.Dungeon then
 							offset = Vector3.new(0, 9, 0)
 							safeYoffset = 20
 						elseif Npc:GetAttribute("RealName") == "Elo The Bunny" then
-							offset = Vector3.new(0, 10, 6)
+							offset = Vector3.new(0, 6, 3) -- same height as a normal mob, no going up
 							safeYoffset = 20
 						elseif
 							weaponStyle
@@ -3436,9 +3436,7 @@ elseif ids.Dungeon then
 			elseif Npc:FindFirstChild("RaiuiSword") then
 				return Npc.HumanoidRootPart.Position + Vector3.new(0, 0, 20)
 			elseif Npc:GetAttribute("RealName") == "Elo The Bunny" then
-				return Npc.HumanoidRootPart.Position
-					- (Npc.HumanoidRootPart.CFrame.LookVector * 10)
-					+ Vector3.new(0, 15, 5)
+				return Npc.HumanoidRootPart.Position - (Npc.HumanoidRootPart.CFrame.LookVector * 10)
 			elseif targetFloorPosition then
 				return targetFloorPosition + Vector3.new(0, 45, 0)
 			else
@@ -3547,16 +3545,9 @@ elseif ids.Dungeon then
 							BlugoriAnims = false
 							Checker = true
 						elseif track.Animation.AnimationId == "rbxassetid://" .. animationIdToCheck3 then
-							EloAnims = true
+							-- Elo's slam: no dodge up any more (the 60-stud rise is what the user did
+							-- not want). Keep fighting from the normal hover spot.
 							Checker = true
-							local oldYpos = PlayerHumpart.Position.Y
-							local targetY = oldYpos + 60
-							Facemouse()
-							task.wait(0.3)
-							-- was two instant CFrame writes (up 60, then back). Ride a pad up and down
-							-- instead: standing on a pad reads as grounded, so no flight strikes.
-							pcall(PadDodge, targetY - oldYpos, 1.5)
-							EloAnims = false
 						end
 					end
 					if not Checker then
