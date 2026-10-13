@@ -4586,7 +4586,7 @@ elseif ids.Dungeon then
 							local acType = checkAnticheatNotifications()
 							-- while walking a path, a noclip flag means we left it: let walkTo back up
 							-- and re-path (the notice lingers ~2s, so ignore repeats for 3s)
-							if acType == "noclip" and ZQ5.walking then
+							if acType == "noclip" then
 								if tick() < (ZQ5.acIgnoreUntil or 0) then
 									acType = nil
 								else
@@ -4600,17 +4600,11 @@ elseif ids.Dungeon then
 								local safeY = y or selected_Offset or cur.Y
 								local safePos = Vector3.new(cur.X, safeY, cur.Z)
 								task.wait(0.5)
-								if acType == "noclip" then
-									-- was instatp(safePos): safePos is straight above us at the tween's
-									-- safe height (up to 2600), which is within the instant-TP radius, so
-									-- it snapped us hundreds of studs up. Rise gently instead, the way
-									-- the tween's own up-phase would.
-									pcall(PadRiseClear, 12)
-									st.lastSet = PlayerHumpart.Position
-								elseif acType == "tpcheck" or acType == "flycheck" then
-									-- was instatp(safePos) straight up to the safe height; pad rise instead
-									pcall(PadRise, 12)
-									st.lastSet = PlayerHumpart.Position
+								-- NO RISING on any anticheat flag: every lift (instant TP, then pad rise)
+								-- climbed us up walls and earned Greater Flight Strikes (>15 over the floor).
+								-- noclip is handled above (end the move, walkTo backs up and re-paths);
+								-- tp/fly checks just pause.
+								if acType == "tpcheck" or acType == "flycheck" then
 									ValuesTable.shadowbanbypass = false
 									task.wait(3)
 									ValuesTable.shadowbanbypass = false
@@ -5321,8 +5315,19 @@ elseif ids.Dungeon then
 			end
 		end)
 
-		-- HOVER ENGINE (quest5): BodyVelocity toward the hover point, proportional speed
-		RunSvc.Heartbeat:Connect(function()
+		-- HOVER ENGINE, pad style (BossRotation hoverStep): an anchored, invisible, CanCollide pad
+		-- walks toward the point under the hover spot at HOVER_PAD_SPEED and the root is pinned on
+		-- top of it every frame. Standing on the pad reads as grounded (no flight strikes), and it
+		-- does not depend on a BodyVelocity winning against the humanoid -- the old BodyVelocity
+		-- hover pushed up at 15-40 studs/s and still sat at ground height on tutorial Vera.
+		local HOVER_PAD_SPEED, HOVER_PAD_STAND = 30, 4
+		local function hoverPadStop()
+			if ZQ5.hoverPad and ZQ5.hoverPad.Parent then
+				ZQ5.hoverPad:Destroy()
+			end
+			ZQ5.hoverPad = nil
+		end
+		RunSvc.Heartbeat:Connect(function(dt)
 			pcall(function()
 				local hrp = PlayerHumpart
 				local active = leaseActive()
@@ -5330,53 +5335,62 @@ elseif ids.Dungeon then
 					and not ZQ5.moving
 					and not RaiuiAnims
 					and not MovementSystem:IsLocked()
-				if not active or not hrp then
+				if not active or not hrp or not hrp.Parent then
 					if ZQ5.hoverActive then
 						ZQ5.hoverActive = false
-						local old = hrp and hrp:FindFirstChild("HoverBodyVelocity")
-						if old then
-							old:Destroy()
-						end
-					end
-					return
-				end
-
-				local mob = ZQ5.hoverMob
-				local mhrp = mob and isValidMob(mob) and mob.HumanoidRootPart
-				if not mhrp then
-					local old = hrp:FindFirstChild("HoverBodyVelocity")
-					if old then
-						old.Velocity = Vector3.zero
+						hoverPadStop()
 					end
 					return
 				end
 
 				ZQ5.hoverActive = true
-				local bv = hrp:FindFirstChild("HoverBodyVelocity")
-				if not bv then
-					bv = Instance.new("BodyVelocity")
-					bv.Name = "HoverBodyVelocity"
-					bv.MaxForce = Vector3.new(1e9, 1e9, 1e9)
-					bv.Velocity = Vector3.zero
-					bv.Parent = hrp
+				local old = hrp:FindFirstChild("HoverBodyVelocity")
+				if old then
+					old:Destroy()
+				end
+				local stale = hrp:FindFirstChild("BodyVelocity")
+				if stale then
+					stale:Destroy()
 				end
 
-				local hum = Character and Character:FindFirstChildOfClass("Humanoid")
-				if hum then
-					hum:ChangeState(Enum.HumanoidStateType.Freefall)
+				local pad = ZQ5.hoverPad
+				if not (pad and pad.Parent) then
+					pad = Instance.new("Part")
+					pad.Name = "pad"
+					pad.Size = Vector3.new(24, 1, 24)
+					pad.Anchored = true
+					pad.CanCollide = true
+					pad.Transparency = 1
+					pad.Position = hrp.Position - Vector3.new(0, HOVER_PAD_STAND, 0)
+					pad.Parent = workspace
+					ZQ5.hoverPad = pad
+				end
+
+				local mob = ZQ5.hoverMob
+				local mhrp = mob and isValidMob(mob) and mob.HumanoidRootPart
+				local standAt = pad.Position + Vector3.new(0, HOVER_PAD_STAND, 0)
+				if not mhrp then
+					-- no target this frame: hold position on the pad
+					hrp.CFrame = CFrame.new(standAt) * (hrp.CFrame - hrp.CFrame.Position)
+					return
 				end
 
 				local targetPos = hoverPointFor(mob)
-				local toTarget = targetPos - hrp.Position
-				if toTarget.Magnitude > ARRIVE_THRESHOLD then
-					bv.Velocity = toTarget.Unit * math.min(BASE_SPEED, math.max(toTarget.Magnitude * 12, 8))
-					hrp.CFrame = CFrame.lookAt(hrp.Position, mhrp.Position)
+				local goal = targetPos - Vector3.new(0, HOVER_PAD_STAND, 0)
+				local toGoal = goal - pad.Position
+				if toGoal.Magnitude > 0.05 then
+					pad.Position = pad.Position + toGoal.Unit * math.min(HOVER_PAD_SPEED * (dt or 1 / 60), toGoal.Magnitude)
+				end
+				standAt = pad.Position + Vector3.new(0, HOVER_PAD_STAND, 0)
+
+				if ZQ5.fight and facingDir and (targetPos - standAt).Magnitude <= ARRIVE_THRESHOLD then
+					hrp.CFrame = CFrame.lookAt(standAt, standAt + facingDir)
 				else
-					bv.Velocity = Vector3.zero
-					if ZQ5.fight and facingDir then
-						hrp.CFrame = CFrame.lookAt(targetPos, targetPos + facingDir)
+					local look = Vector3.new(mhrp.Position.X, standAt.Y, mhrp.Position.Z)
+					if (look - standAt).Magnitude > 0.1 then
+						hrp.CFrame = CFrame.lookAt(standAt, look)
 					else
-						hrp.CFrame = CFrame.lookAt(targetPos, mhrp.Position)
+						hrp.CFrame = CFrame.new(standAt) * (hrp.CFrame - hrp.CFrame.Position)
 					end
 				end
 			end)
