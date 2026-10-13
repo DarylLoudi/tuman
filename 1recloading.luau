@@ -6430,6 +6430,12 @@ elseif ids.Dungeon then
 				if not workspace:GetAttribute("HandCuffed") and Character:FindFirstChild("Cuffed") then
 					workspace:SetAttribute("HandCuffed", true)
 				end
+				-- on Floor 1 (or deeper) the tutorial is over even when the game never put the cuffs
+				-- on us: without this the tutorial branch below (Lobby island still exists, not
+				-- HandCuffed) kept running forever and we stood at the Floor 1 spawn doing nothing
+				if not workspace:GetAttribute("HandCuffed") and workspace.Islands:FindFirstChild("Impel Base - Floor 1") then
+					workspace:SetAttribute("HandCuffed", true)
+				end
 
 				pcall(function()
 					player.PlayerGui.HUD.Enabled = true
