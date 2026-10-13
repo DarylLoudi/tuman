@@ -6779,14 +6779,22 @@ elseif ids.Dungeon then
 				-- HandCuffed) kept running forever and we stood at the Floor 1 spawn doing nothing
 				-- (by where WE are: the Floor 1 island can already exist while we are still in the
 				-- lobby at Y~8, and flagging it there skipped the whole tutorial Vera fight)
-				local myY = PlayerHumpart and PlayerHumpart.Position.Y or 0
-				if
-					not workspace:GetAttribute("HandCuffed")
-					and workspace.Islands:FindFirstChild("Impel Base - Floor 1")
-					and myY > 1000
-				then
+				-- (any floor counts; and only clear it in the actual lobby: while dead the body
+				-- sits at (0,~103,0) for a moment, that cleared it, and after respawning on Floor 2
+				-- we ran the tutorial branch -- no tutorial Vera there -> stood still forever)
+				local myPos = PlayerHumpart and PlayerHumpart.Position or Vector3.zero
+				local myY = myPos.Y
+				local onAFloor = false
+				for _, isl in ipairs(workspace.Islands:GetChildren()) do
+					if string.find(isl.Name, "Impel Base - Floor", 1, true) then
+						onAFloor = true
+						break
+					end
+				end
+				local inLobby = myY < 60 and (Vector3.new(myPos.X, 0, myPos.Z) - Vector3.new(5900, 0, -10190)).Magnitude < 800
+				if not workspace:GetAttribute("HandCuffed") and onAFloor and myY > 300 then
 					workspace:SetAttribute("HandCuffed", true)
-				elseif workspace:GetAttribute("HandCuffed") and myY < 500 and not Character:FindFirstChild("Cuffed") then
+				elseif workspace:GetAttribute("HandCuffed") and inLobby and not Character:FindFirstChild("Cuffed") then
 					workspace:SetAttribute("HandCuffed", nil) -- back in the lobby, tutorial not done
 				end
 
