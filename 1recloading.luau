@@ -1805,17 +1805,29 @@ elseif ids.Dungeon then
 
 	local COLLIDE_PARTS = { HumanoidRootPart = true, Head = true, Torso = true, UpperTorso = true, LowerTorso = true }
 
+	-- NOCLIP IS OFF. Set NOCLIP_ENABLED = true to bring the old behaviour (collisions off while
+	-- travelling/hovering) back. With it off, every noClip(true) call just makes sure our own
+	-- body parts collide normally.
+	local NOCLIP_ENABLED = false
 	function noClip(Value)
 		if noClipConnection then
 			noClipConnection:Disconnect()
+			noClipConnection = nil
+		end
+		if Value and not NOCLIP_ENABLED then
+			pcall(function()
+				for _, v in pairs(LocalPlayer.Character:GetChildren()) do
+					if (v.ClassName == "Part" or v.ClassName == "MeshPart") and COLLIDE_PARTS[v.Name] then
+						v.CanCollide = true
+					end
+				end
+			end)
+			return
 		end
 		if Value then
 			local wasIdle = false
 			noClipConnection = Services.RunService.Stepped:Connect(function()
 				pcall(function()
-					-- noclip only while we are actually travelling or hovering. Standing still
-					-- with noclip on made us sink through floors (the game drops us at floor
-					-- level) and the game's OverlapHead noclip check kicked us.
 					local idle = not (ZQ5 and (ZQ5.moving or ZQ5.hoverActive or ZQ5.rescuing))
 					for i, v in pairs(LocalPlayer.Character:GetChildren()) do
 						if v.ClassName == "Part" or v.ClassName == "MeshPart" then
