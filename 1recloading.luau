@@ -1803,18 +1803,30 @@ elseif ids.Dungeon then
 		return inventoryTable[itemName] or 0
 	end
 
+	local COLLIDE_PARTS = { HumanoidRootPart = true, Head = true, Torso = true, UpperTorso = true, LowerTorso = true }
+
 	function noClip(Value)
 		if noClipConnection then
 			noClipConnection:Disconnect()
 		end
 		if Value then
+			local wasIdle = false
 			noClipConnection = Services.RunService.Stepped:Connect(function()
 				pcall(function()
+					-- noclip only while we are actually travelling or hovering. Standing still
+					-- with noclip on made us sink through floors (the game drops us at floor
+					-- level) and the game's OverlapHead noclip check kicked us.
+					local idle = not (ZQ5 and (ZQ5.moving or ZQ5.hoverActive))
 					for i, v in pairs(LocalPlayer.Character:GetChildren()) do
 						if v.ClassName == "Part" or v.ClassName == "MeshPart" then
-							v.CanCollide = false
+							if not idle then
+								v.CanCollide = false
+							elseif not wasIdle and COLLIDE_PARTS[v.Name] then
+								v.CanCollide = true
+							end
 						end
 					end
+					wasIdle = idle
 				end)
 			end)
 		end
@@ -2045,6 +2057,39 @@ elseif ids.Dungeon then
 			end)
 		end)
 	end
+
+	-- STATE LOG (every 2s): what holds us and what the script thinks it is doing
+	task.spawn(function()
+		while true do
+			task.wait(2)
+			pcall(function()
+				local h = PlayerHumpart
+				local hum = Character and Character:FindFirstChildOfClass("Humanoid")
+				if not h or not hum then
+					return
+				end
+				local movers = {}
+				for _, v in ipairs(h:GetChildren()) do
+					if v:IsA("BodyMover") then
+						movers[#movers + 1] = v.Name .. "=" .. tostring(v.Velocity)
+					end
+				end
+				print(string.format(
+					"[STATE] pos=%s vel=%s hum=%s PS=%s moving=%s hover=%s movers=[%s] Cuffed=%s HandCuffed=%s Npc=%s",
+					tostring(h.Position),
+					tostring(h.AssemblyLinearVelocity),
+					tostring(hum:GetState()),
+					tostring(hum.PlatformStand),
+					tostring(ZQ5 and ZQ5.moving),
+					tostring(ZQ5 and ZQ5.hoverActive),
+					table.concat(movers, ", "),
+					tostring(Character:FindFirstChild("Cuffed") ~= nil),
+					tostring(workspace:GetAttribute("HandCuffed")),
+					tostring(Npc and Npc.Name)
+				))
+			end)
+		end
+	end)
 
 	local LastInstantTP = 0
 	local INSTANT_TP_COOLDOWN = 3
