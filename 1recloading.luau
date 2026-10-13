@@ -1816,7 +1816,7 @@ elseif ids.Dungeon then
 					-- noclip only while we are actually travelling or hovering. Standing still
 					-- with noclip on made us sink through floors (the game drops us at floor
 					-- level) and the game's OverlapHead noclip check kicked us.
-					local idle = not (ZQ5 and (ZQ5.moving or ZQ5.hoverActive))
+					local idle = not (ZQ5 and (ZQ5.moving or ZQ5.hoverActive or ZQ5.rescuing))
 					for i, v in pairs(LocalPlayer.Character:GetChildren()) do
 						if v.ClassName == "Part" or v.ClassName == "MeshPart" then
 							if not idle then
@@ -2017,21 +2017,59 @@ elseif ids.Dungeon then
 		end)
 	end
 
-	-- GROUND RESCUE: the game now drops us at Y=2072 on Floor 1, which is the TOP of its floor slab
-	-- (the script's steps assume +3 above it), and noclip is always on, so we sank into the slab and
-	-- the noclip anticheat fired. If our root part is inside a solid island part whose top is just
-	-- above us, lift us onto that top.
+	-- GROUND RESCUE: the game drops us at Y=2072 on Floor 1, which is the TOP of its floor slab
+	-- (the script's steps assume +3 above it). If our root part is inside a solid island part whose
+	-- top is just above us, float up onto that top with the hover engine's BodyVelocity logic
+	-- (proportional speed toward the point, noclip on meanwhile) instead of teleporting.
 	do
 		local overlap = OverlapParams.new()
 		overlap.FilterType = Enum.RaycastFilterType.Include
-		local lastRescue = 0
+		local rescueTargetY = nil
+		local rescueStart = 0
+		local function stopRescue(h)
+			ZQ5.rescuing = false
+			rescueTargetY = nil
+			local bv = h and h:FindFirstChild("RescueBodyVelocity")
+			if bv then
+				bv:Destroy()
+			end
+		end
 		Services.RunService.Heartbeat:Connect(function()
 			pcall(function()
 				local h = PlayerHumpart
-				if not h or not h.Parent or tick() - lastRescue < 1 then
+				if not h or not h.Parent then
+					rescueTargetY = nil
+					ZQ5.rescuing = false
 					return
 				end
-				if ZQ5 and (ZQ5.moving or ZQ5.hoverActive) then
+
+				-- already floating up: same proportional BodyVelocity as the hover engine
+				if rescueTargetY then
+					if ZQ5.moving or ZQ5.hoverActive or tick() - rescueStart > 4 then
+						stopRescue(h)
+						return
+					end
+					local rise = rescueTargetY - h.Position.Y
+					if rise <= 0.3 then
+						stopRescue(h)
+						return
+					end
+					local bv = h:FindFirstChild("RescueBodyVelocity")
+					if not bv then
+						bv = Instance.new("BodyVelocity")
+						bv.Name = "RescueBodyVelocity"
+						bv.MaxForce = Vector3.new(1e9, 1e9, 1e9)
+						bv.Parent = h
+					end
+					local stale = h:FindFirstChild("BodyVelocity")
+					if stale then
+						stale:Destroy()
+					end
+					bv.Velocity = Vector3.new(0, math.min(30, math.max(rise * 12, 8)), 0)
+					return
+				end
+
+				if ZQ5.moving or ZQ5.hoverActive then
 					return
 				end
 				local islands = workspace:FindFirstChild("Islands")
@@ -2049,10 +2087,10 @@ elseif ids.Dungeon then
 					end
 				end
 				if bestRise then
-					lastRescue = tick()
-					print(string.format("[RESCUE] inside floor at %s, lifting %.1f studs", tostring(h.Position), bestRise + 3.2))
-					h.CFrame = h.CFrame + Vector3.new(0, bestRise + 3.2, 0)
-					h.AssemblyLinearVelocity = Vector3.zero
+					rescueTargetY = h.Position.Y + bestRise + 3.2
+					rescueStart = tick()
+					ZQ5.rescuing = true
+					print(string.format("[RESCUE] inside floor at %s, floating up %.1f studs", tostring(h.Position), bestRise + 3.2))
 				end
 			end)
 		end)
@@ -3218,7 +3256,7 @@ elseif ids.Dungeon then
 			end
 			if PlayerHumpart then
 				local isFightingVera = Npc and string.find(Npc.Name, "Vera", 1, true) ~= nil
-				local hovering = ZQ5 and ZQ5.hoverActive
+				local hovering = ZQ5 and (ZQ5.hoverActive or ZQ5.rescuing)
 				local agibleForVelocity = hovering
 					or (
 						PlayerHumpart
@@ -5370,7 +5408,7 @@ elseif ids.Dungeon then
 	spawn(function()
 		while task.wait(0.5) do
 			pcall(function()
-				if ZQ5 and (ZQ5.hoverActive or ZQ5.moving) then
+				if ZQ5 and (ZQ5.hoverActive or ZQ5.moving or ZQ5.rescuing) then
 					local staleBv = PlayerHumpart:FindFirstChild("BodyVelocity")
 					if staleBv then
 						staleBv:Destroy()
