@@ -4319,11 +4319,29 @@ elseif ids.Dungeon then
 	-- Falls back to the old straight move when no path is found.
 	local PathfindingService = game:GetService("PathfindingService")
 	local WALK_SPEED = 30
-	-- true: every move is ONE straight ZQ5.move line to the target, through walls (noclip is
-	-- on while moving), no pathfinding, no wall check, and noclip flags do not stop it.
-	-- false: walk pathfinding waypoints around walls.
-	local STRAIGHT_THROUGH_WALLS = true
-	ZQ5.straight = STRAIGHT_THROUGH_WALLS
+	-- Moves walk pathfinding waypoints around walls. MAZE ONLY (Floor 1): if we stay stuck in
+	-- the same spot (no path, repeated re-paths, or < 5 studs of progress for 6s), finish with
+	-- ONE straight ZQ5.move line from there to the target, through the walls (noclip is on
+	-- while moving; noclip flags do not stop that move).
+	local MAZE_STUCK_SECONDS = 6
+	ZQ5.straight = false
+	local stuckPos, stuckSince = nil, 0
+
+	local function inMaze()
+		local islands = workspace:FindFirstChild("Islands")
+		return islands
+			and islands:FindFirstChild("Impel Base - Floor 1")
+			and not islands:FindFirstChild("Impel Base - Floor 2")
+	end
+
+	local function straightThrough(dest, poll, why)
+		print(string.format("[WALK] maze: stuck (%s) at %s, going straight to %s", why, tostring(PlayerHumpart.Position), tostring(dest)))
+		ZQ5.straight = true
+		local ok, reason = ZQ5.move(dest, WALK_SPEED, { poll = poll })
+		ZQ5.straight = false
+		stuckPos, stuckSince = nil, 0
+		return ok, reason
+	end
 	local ROOT_ABOVE_GROUND = 3
 
 	-- ground under `pos`, looking DOWN only from just above it (casting from higher up used to
@@ -4411,16 +4429,25 @@ elseif ids.Dungeon then
 			dest = Vector3.new(dest.X, gy + ROOT_ABOVE_GROUND, dest.Z)
 		end
 
-		if STRAIGHT_THROUGH_WALLS then
-			return ZQ5.move(dest, WALK_SPEED, { poll = poll })
+		-- maze: no real progress for MAZE_STUCK_SECONDS -> straight line from here
+		-- (only counts back-to-back walk attempts: a pause to fight or wait resets it)
+		local here = PlayerHumpart.Position
+		if not stuckPos or (here - stuckPos).Magnitude > 5 or tick() - (ZQ5.lastWalkCall or 0) > 3 then
+			stuckPos, stuckSince = here, tick()
+		end
+		ZQ5.lastWalkCall = tick()
+		if inMaze() and tick() - stuckSince > MAZE_STUCK_SECONDS then
+			return straightThrough(dest, poll, "no progress")
 		end
 
 		for attempt = 1, 4 do
 			local from = PlayerHumpart.Position
 			local wps, minY, maxY, nearOnly = computePath(from, dest)
 			if not wps then
-				-- NO straight-line fallback: the wall check does not catch every wall, and the
-				-- straight move through them is what set off tp/noclip checks and kicked us
+				if inMaze() then
+					return straightThrough(dest, poll, "no path")
+				end
+				-- outside the maze: no straight-line fallback (it set off tp/noclip checks)
 				print("[WALK] no path to " .. tostring(dest) .. ", skipping this move")
 				task.wait(1)
 				return false, "nopath"
@@ -4436,6 +4463,7 @@ elseif ids.Dungeon then
 			for i = 2, #wps do
 				local wp = (i == #wps and not nearOnly) and dest or (wps[i].Position + Vector3.new(0, ROOT_ABOVE_GROUND, 0))
 				local _, reason = ZQ5.move(wp, WALK_SPEED, { wallMargin = 1.5, poll = poll })
+				ZQ5.lastWalkCall = tick()
 				if reason == "stuck" or reason == "noclip" then
 					failed = reason
 					break
@@ -4452,6 +4480,9 @@ elseif ids.Dungeon then
 			print(string.format("[WALK] %s at %s, backing up to %s and re-pathing (try %d)", failed, tostring(PlayerHumpart.Position), tostring(lastGood), attempt))
 			ZQ5.move(lastGood, WALK_SPEED, {})
 			task.wait(0.3)
+		end
+		if inMaze() then
+			return straightThrough(dest, poll, "re-paths kept failing")
 		end
 		return false, "walkfail"
 	end
