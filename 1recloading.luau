@@ -3030,6 +3030,23 @@ elseif ids.Dungeon then
 				local currentHasWeapon = hasTargetWeapon()
 				local currentHasHaki = statsFolder.Stats.BusoMastery.Value ~= 0
 
+				-- chests we could not walk to while the first barrier still stands are behind it
+				-- (the old script flew over at Y 2600; walking can't). Clear the barrier first and
+				-- come back for them, instead of giving up on this run.
+				local skipped = 0
+				for part in pairs(Others.SkipChests or {}) do
+					if part.Parent and part.Parent.Parent and part.Parent:FindFirstChild("Lock") then
+						skipped = skipped + 1
+					end
+				end
+				local fl1 = workspace.Islands:FindFirstChild("Impel Base - Floor 1")
+				local barrierUp = fl1 and fl1:FindFirstChild("Barriers") and fl1.Barriers:FindFirstChild("FirstBarrier")
+				if (not currentHasWeapon or not currentHasHaki) and skipped > 0 and barrierUp and not Others.ChestRetryDone then
+					print(string.format("[CHEST] %d rare chests out of reach, clearing the barrier first and coming back", skipped))
+					Others.ChestsBehindBarrier = true
+					return
+				end
+
 				if not currentHasWeapon then
 					task.wait(2)
 					game:GetService("TeleportService"):Teleport(6360478118, game:GetService("Players").LocalPlayer)
@@ -6886,11 +6903,6 @@ elseif ids.Dungeon then
 						Buso(true)
 
 						local hashaki = statsFolder.Stats.BusoMastery.Value ~= 0
-						if not hashaki then
-							hakiFarm()
-							return
-						end
-
 						pickupWeaponDrops()
 						checkOwnedWeapons()
 
@@ -6899,7 +6911,14 @@ elseif ids.Dungeon then
 							or OwnedFarmedWeapons["Hollow's Great Sword"]
 							or OwnedFarmedWeapons["Dark Blade"]
 
-						if not hasRequiredWeapon then
+						-- chests until we have haki AND a weapon (was: haki only -- with haki but no
+						-- weapon it went straight to the hub without opening a single chest)
+						if (not hashaki or not hasRequiredWeapon) and not Others.ChestsBehindBarrier then
+							hakiFarm()
+							return
+						end
+
+						if not hasRequiredWeapon and not Others.ChestsBehindBarrier then
 							task.wait(2)
 							game:GetService("TeleportService")
 								:Teleport(6360478118, game:GetService("Players").LocalPlayer)
@@ -7007,6 +7026,18 @@ elseif ids.Dungeon then
 								CanTween = true
 							end
 						end
+					elseif
+						workspace.Islands:FindFirstChild("Impel Base - Floor 1")
+						and Others.ChestsBehindBarrier
+						and not Character:FindFirstChild("Cuffed")
+					then
+						-- barrier down: the rare chests that were out of reach behind it
+						print("[CHEST] barrier is down, going back for the rare chests behind it")
+						Others.ChestsBehindBarrier = false
+						Others.ChestRetryDone = true
+						Others.SkipChests = {}
+						Others.ChestSince = {}
+						hakiFarm()
 					elseif workspace.Islands:FindFirstChild("Impel Base - Floor 1") then
 						MazeNpcKill()
 					end
