@@ -2409,7 +2409,7 @@ elseif ids.Dungeon then
 							offset = Vector3.new(0, 9, 0)
 							safeYoffset = 20
 						elseif Npc:GetAttribute("RealName") == "Elo The Bunny" then
-							offset = Vector3.new(0, 6, 3) -- same height as a normal mob, no going up
+							offset = Vector3.new(0, 20, 3) -- hover 20 studs above Elo
 							safeYoffset = 20
 						elseif
 							weaponStyle
