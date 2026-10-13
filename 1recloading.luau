@@ -4341,7 +4341,14 @@ elseif ids.Dungeon then
 			st.pauseAt = nil
 
 			local pos = h.Position
-			local rot = h.CFrame - h.CFrame.Position
+			-- always UPRIGHT (yaw only). PlatformStand lets the body tip over, and keeping
+			-- whatever tilt it had made us slide along lying down ("ragdolled while tweening")
+			local look = h.CFrame.LookVector
+			local flatLook = Vector3.new(look.X, 0, look.Z)
+			if flatLook.Magnitude < 0.1 then
+				flatLook = Vector3.new(0, 0, -1)
+			end
+			local rot = CFrame.lookAt(Vector3.zero, flatLook.Unit)
 			local route = st.route
 			local budget = st.speed * dt
 			local toTarget = st.dest - pos
@@ -4386,8 +4393,13 @@ elseif ids.Dungeon then
 				end
 			end
 
+			local travel = Vector3.new(nextPos.X - pos.X, 0, nextPos.Z - pos.Z)
+			if travel.Magnitude > 0.01 then
+				rot = CFrame.lookAt(Vector3.zero, travel.Unit) -- face where we're going
+			end
 			h.CFrame = CFrame.new(nextPos) * rot
 			h.AssemblyLinearVelocity = Vector3.zero
+			h.AssemblyAngularVelocity = Vector3.zero
 			st.lastSet = nextPos
 		end)
 
@@ -4407,20 +4419,14 @@ elseif ids.Dungeon then
 			local d = h.Position - st.lastSet
 			local sideways = Vector3.new(d.X, 0, d.Z).Magnitude
 			if drift > 3 and sideways > 2 and d.Y > -sideways then
-				-- (only a SIDEWAYS shove counts as a hit. A mostly-downward jump is gravity during
-				-- a long frame -- low FPS in a background window -- and must be held, or we
-				-- "carried on" from lower and lower spots and sank through the floor.)
-				-- knocked (an NPC hit): never snap back to the line. The snap is a teleport for
-				-- the server (tp check -> a 4s pause, "Y+ too fast" when it is upward), and every
-				-- hit in the maze meant stop... go... stop. End the move; walkTo re-paths from
-				-- wherever the hit left us.
+				-- knocked sideways (an NPC hit / ragdoll): just keep going from where it left us.
+				-- No snap back (a teleport for the server), no stopping the move.
 				st.lastSet = h.Position
-				st.reason = "knocked"
-				st.finished = true
-				return
 			elseif drift > 0.05 then
-				local rot = h.CFrame - h.CFrame.Position
-				h.CFrame = CFrame.new(st.lastSet) * rot
+				local lv = h.CFrame.LookVector
+				local fl = Vector3.new(lv.X, 0, lv.Z)
+				local rot = fl.Magnitude > 0.1 and CFrame.lookAt(Vector3.zero, fl.Unit) or CFrame.new()
+				h.CFrame = CFrame.new(st.lastSet) * rot -- upright
 			end
 			h.AssemblyLinearVelocity = Vector3.zero
 			h.AssemblyAngularVelocity = Vector3.zero
