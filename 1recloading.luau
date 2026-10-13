@@ -4467,7 +4467,7 @@ elseif ids.Dungeon then
 	-- way a player walks: PathfindingService waypoints, root at standing height, 30 studs/s.
 	-- Falls back to the old straight move when no path is found.
 	local PathfindingService = game:GetService("PathfindingService")
-	local WALK_SPEED = 30
+	local WALK_SPEED = 40
 	-- Moves walk pathfinding waypoints around walls. MAZE ONLY (Floor 1): if we stay stuck in
 	-- the same spot (no path, repeated re-paths, or < 5 studs of progress for 6s), finish with
 	-- ONE straight ZQ5.move line from there to the target, through the walls (noclip is on
@@ -4592,6 +4592,17 @@ elseif ids.Dungeon then
 	function ZQ5.walkTo(dest, poll)
 		if not PlayerHumpart or not PlayerHumpart.Parent then
 			return false, "nohrp"
+		end
+		-- the tween poll sets st.speed to the tween speed (80+). Per-waypoint moves stopped and
+		-- restarted so often that it never really got there; the one continuous route did, and
+		-- ran way too fast. Walking keeps WALK_SPEED.
+		if poll then
+			local tweenPoll = poll
+			poll = function(st)
+				local r = tweenPoll(st)
+				st.speed = WALK_SPEED
+				return r
+			end
 		end
 
 		-- walking ends ON the ground: a ground-level target (chest, key) would put the root in
