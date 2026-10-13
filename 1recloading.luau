@@ -2900,12 +2900,11 @@ elseif ids.Dungeon then
 				if meshPart then
 					if Value:FindFirstChild("Lock") then
 						local ChestData = ChestInfo[meshPart.MeshId]
-						if
-							ChestData
-							and ChestData.Name == "Rare Chest"
-							and not (Others.SkipChests and Others.SkipChests[meshPart])
-						then
-							table.insert(RareChests, meshPart)
+						if ChestData and ChestData.Name == "Rare Chest" then
+							-- a skipped (unreachable) rare chest is left alone: not targeted, not deleted
+							if not (Others.SkipChests and Others.SkipChests[meshPart]) then
+								table.insert(RareChests, meshPart)
+							end
 						elseif ChestData and ChestData.Name ~= "Common Chest" then
 							Value:Destroy()
 						end
