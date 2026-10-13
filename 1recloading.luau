@@ -4804,6 +4804,31 @@ elseif ids.Dungeon then
 		return false, "walkfail"
 	end
 
+	-- is our head really inside world geometry (walls, floors)? Characters, NPCs and effects
+	-- don't count: a mob's body overlapping us is not something a re-path can fix
+	function headInWorld()
+		local head = Character and Character:FindFirstChild("Head")
+		if not head then
+			return false
+		end
+		local op = OverlapParams.new()
+		op.FilterType = Enum.RaycastFilterType.Exclude
+		op.FilterDescendantsInstances = {
+			Character,
+			workspace:FindFirstChild("NPCs"),
+			workspace:FindFirstChild("Effects"),
+			workspace:FindFirstChild("PlayerCharacters"),
+			ZQ5 and ZQ5.hoverPad or nil,
+		}
+		pcall(function()
+			op.RespectCanCollide = true
+		end)
+		local ok, parts = pcall(function()
+			return workspace:GetPartBoundsInBox(head.CFrame, head.Size * 0.9, op)
+		end)
+		return ok and parts and #parts > 0
+	end
+
 	function tweenWithTeleport(pos, speed, offsetY, tweenconfigs)
 		if not tweenconfigs then
 			tweenconfigs = {}
@@ -5030,6 +5055,13 @@ elseif ids.Dungeon then
 								acType = nil -- going through walls on purpose: keep going
 							elseif acType == "noclip" then
 								if tick() < (ZQ5.acIgnoreUntil or 0) then
+									acType = nil
+								elseif not headInWorld() then
+									-- the head is clear of walls / floors: the flag came from a mob
+									-- overlapping us (chasers in the maze) or is a lingering notice.
+									-- Stopping to back up and re-path just let the chaser catch up
+									-- again, over and over. Keep walking.
+									ZQ5.acIgnoreUntil = tick() + 3
 									acType = nil
 								else
 									ZQ5.acIgnoreUntil = tick() + 3
