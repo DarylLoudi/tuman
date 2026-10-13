@@ -4253,6 +4253,68 @@ elseif ids.Dungeon then
 	end
 
 
+	-- GROUND WALK: the game now flags head-in-geometry (OverlapHead), flying more than 15
+	-- studs over the floor (Greater Flight Strike) and moving too fast (TP check). So travel the
+	-- way a player walks: PathfindingService waypoints, root at standing height, 30 studs/s.
+	-- Falls back to the old straight move when no path is found.
+	local PathfindingService = game:GetService("PathfindingService")
+	local WALK_SPEED = 30
+	local ROOT_ABOVE_GROUND = 3
+
+	local function groundYAt(pos)
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Exclude
+		params.FilterDescendantsInstances = {
+			Character,
+			workspace:FindFirstChild("NPCs"),
+			workspace:FindFirstChild("Effects"),
+		}
+		pcall(function()
+			params.RespectCanCollide = true
+		end)
+		local hit = workspace:Raycast(pos + Vector3.new(0, 6, 0), Vector3.new(0, -40, 0), params)
+		return hit and hit.Position.Y or nil
+	end
+
+	function ZQ5.walkTo(dest, poll)
+		local h = PlayerHumpart
+		if not h or not h.Parent then
+			return false, "nohrp"
+		end
+
+		-- a ground-level target (chest, key, floor point) would put the root in the floor
+		local gy = groundYAt(dest)
+		if gy and dest.Y < gy + ROOT_ABOVE_GROUND then
+			dest = Vector3.new(dest.X, gy + ROOT_ABOVE_GROUND, dest.Z)
+		end
+
+		local ok, path = pcall(function()
+			local p = PathfindingService:CreatePath({
+				AgentRadius = 2,
+				AgentHeight = 5,
+				AgentCanJump = true,
+				WaypointSpacing = 6,
+			})
+			p:ComputeAsync(h.Position, dest)
+			return p
+		end)
+
+		if ok and path and path.Status == Enum.PathStatus.Success then
+			local wps = path:GetWaypoints()
+			for i = 2, #wps do
+				local wp = (i == #wps) and dest or (wps[i].Position + Vector3.new(0, ROOT_ABOVE_GROUND, 0))
+				local _, reason = ZQ5.move(wp, WALK_SPEED, { poll = poll })
+				if reason then
+					return false, reason
+				end
+			end
+			return true, nil
+		end
+
+		print("[WALK] no path to " .. tostring(dest) .. ", moving straight")
+		return ZQ5.move(dest, WALK_SPEED, { wallMargin = 2.5, poll = poll })
+	end
+
 	function tweenWithTeleport(pos, speed, offsetY, tweenconfigs)
 		if not tweenconfigs then
 			tweenconfigs = {}
@@ -4446,9 +4508,7 @@ elseif ids.Dungeon then
 					end
 
 					local hops = 0
-					local reached, reason = ZQ5.move(targetCF.Position, effSpeed(), {
-						wallMargin = 2.5,
-						poll = function(st)
+					local pollFn = function(st)
 							if tweenState and not tweenState.active then
 								return "inactive"
 							end
@@ -4487,9 +4547,11 @@ elseif ids.Dungeon then
 									-- it snapped us hundreds of studs up. Rise gently instead, the way
 									-- the tween's own up-phase would.
 									pcall(PadRiseClear, 12)
+									st.lastSet = PlayerHumpart.Position
 								elseif acType == "tpcheck" or acType == "flycheck" then
 									-- was instatp(safePos) straight up to the safe height; pad rise instead
 									pcall(PadRise, 12)
+									st.lastSet = PlayerHumpart.Position
 									ValuesTable.shadowbanbypass = false
 									task.wait(3)
 									ValuesTable.shadowbanbypass = false
@@ -4544,8 +4606,10 @@ elseif ids.Dungeon then
 								return "stuck"
 							end
 							return nil
-						end,
-					})
+						end
+
+					-- walk the ground like a player: pathfinding waypoints at standing height
+					local reached, reason = ZQ5.walkTo(targetCF.Position, pollFn)
 
 					if reason == "threshold" or reason == "inactive" then
 						return false
