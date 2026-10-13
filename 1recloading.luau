@@ -4200,7 +4200,14 @@ elseif ids.Dungeon then
 			if not h or not st.lastSet or st.finished or st.paused then
 				return
 			end
-			if (h.Position - st.lastSet).Magnitude > 0.05 then
+			local drift = (h.Position - st.lastSet).Magnitude
+			if drift > 40 then
+				-- the GAME moved us (floor change, cutscene): never drag the body back
+				st.finished = true
+				st.reason = "teleported"
+				return
+			end
+			if drift > 0.05 then
 				local rot = h.CFrame - h.CFrame.Position
 				h.CFrame = CFrame.new(st.lastSet) * rot
 			end
@@ -4278,7 +4285,7 @@ elseif ids.Dungeon then
 		return hit and hit.Position.Y or nil
 	end
 
-	local function computePath(from, dest)
+	local function computePathExact(from, dest)
 		local ok, path = pcall(function()
 			local p = PathfindingService:CreatePath({
 				AgentRadius = 2.5,
@@ -4310,6 +4317,24 @@ elseif ids.Dungeon then
 		return wps, minY, maxY
 	end
 
+	-- the exact target is often unreachable for the navmesh (a chest or key is a solid model
+	-- standing right there): try points in a ring around it; the last few studs are a short hop
+	local RING = { Vector3.new(5, 0, 0), Vector3.new(-5, 0, 0), Vector3.new(0, 0, 5), Vector3.new(0, 0, -5),
+		Vector3.new(4, 0, 4), Vector3.new(-4, 0, 4), Vector3.new(4, 0, -4), Vector3.new(-4, 0, -4) }
+	local function computePath(from, dest)
+		local wps, minY, maxY = computePathExact(from, dest)
+		if wps then
+			return wps, minY, maxY, false
+		end
+		for _, off in ipairs(RING) do
+			wps, minY, maxY = computePathExact(from, dest + off)
+			if wps then
+				return wps, minY, maxY, true
+			end
+		end
+		return nil
+	end
+
 	-- Walk dest along a path. Every segment keeps the wall check: hitting a wall ("stuck") or
 	-- the game's noclip flag ("noclip") means we left the path (knockback, a recovery lift...),
 	-- so back up to the last waypoint we reached cleanly and compute a fresh path from there.
@@ -4328,10 +4353,13 @@ elseif ids.Dungeon then
 
 		for attempt = 1, 4 do
 			local from = PlayerHumpart.Position
-			local wps, minY, maxY = computePath(from, dest)
+			local wps, minY, maxY, nearOnly = computePath(from, dest)
 			if not wps then
-				print("[WALK] no usable path to " .. tostring(dest) .. ", moving straight")
-				return ZQ5.move(dest, WALK_SPEED, { wallMargin = 2.5, poll = poll })
+				-- NO straight-line fallback: the wall check does not catch every wall, and the
+				-- straight move through them is what set off tp/noclip checks and kicked us
+				print("[WALK] no path to " .. tostring(dest) .. ", skipping this move")
+				task.wait(1)
+				return false, "nopath"
 			end
 			if tick() - lastWalkLog > 3 then
 				lastWalkLog = tick()
@@ -4342,7 +4370,7 @@ elseif ids.Dungeon then
 			local failed = nil
 			ZQ5.walking = true
 			for i = 2, #wps do
-				local wp = (i == #wps) and dest or (wps[i].Position + Vector3.new(0, ROOT_ABOVE_GROUND, 0))
+				local wp = (i == #wps and not nearOnly) and dest or (wps[i].Position + Vector3.new(0, ROOT_ABOVE_GROUND, 0))
 				local _, reason = ZQ5.move(wp, WALK_SPEED, { wallMargin = 1.5, poll = poll })
 				if reason == "stuck" or reason == "noclip" then
 					failed = reason
@@ -4355,6 +4383,9 @@ elseif ids.Dungeon then
 			end
 			ZQ5.walking = false
 			if not failed then
+				if nearOnly and (PlayerHumpart.Position - dest).Magnitude <= 9 then
+					ZQ5.move(dest, WALK_SPEED, {}) -- the short hop onto the target itself
+				end
 				return true, nil
 			end
 			print(string.format("[WALK] %s at %s, backing up to %s and re-pathing (try %d)", failed, tostring(PlayerHumpart.Position), tostring(lastGood), attempt))
@@ -5340,6 +5371,20 @@ elseif ids.Dungeon then
 						ZQ5.hoverActive = false
 						hoverPadStop()
 					end
+					ZQ5.lastPin = nil
+					return
+				end
+
+				-- the GAME moved us far from where we pinned (beaten boss -> next floor): drop the
+				-- hover and the lease instead of pinning the body back into the old room
+				if ZQ5.lastPin and (hrp.Position - ZQ5.lastPin).Magnitude > 40 then
+					print("[HOVER] external teleport detected, releasing the hover")
+					ZQ5.lastPin = nil
+					ZQ5.lease = 0
+					ZQ5.enemy = nil
+					ZQ5.hover = false
+					ZQ5.hoverActive = false
+					hoverPadStop()
 					return
 				end
 
@@ -5370,8 +5415,11 @@ elseif ids.Dungeon then
 				local mhrp = mob and isValidMob(mob) and mob.HumanoidRootPart
 				local standAt = pad.Position + Vector3.new(0, HOVER_PAD_STAND, 0)
 				if not mhrp then
-					-- no target this frame: hold position on the pad
-					hrp.CFrame = CFrame.new(standAt) * (hrp.CFrame - hrp.CFrame.Position)
+					-- target gone (dead / despawned): let go, do not hold the body in place
+					ZQ5.lastPin = nil
+					ZQ5.lease = 0
+					ZQ5.hoverActive = false
+					hoverPadStop()
 					return
 				end
 
@@ -5383,6 +5431,7 @@ elseif ids.Dungeon then
 				end
 				standAt = pad.Position + Vector3.new(0, HOVER_PAD_STAND, 0)
 
+				ZQ5.lastPin = standAt
 				if ZQ5.fight and facingDir and (targetPos - standAt).Magnitude <= ARRIVE_THRESHOLD then
 					hrp.CFrame = CFrame.lookAt(standAt, standAt + facingDir)
 				else
