@@ -5417,9 +5417,10 @@ elseif ids.Dungeon then
 				local mhrp = mob and isValidMob(mob) and mob.HumanoidRootPart
 				local standAt = pad.Position + Vector3.new(0, HOVER_PAD_STAND, 0)
 				if not mhrp then
-					-- target gone (dead / despawned): let go, do not hold the body in place
+					-- no hover target this frame (dead / not picked yet): let go of the body, but
+					-- do NOT clear the lease -- the aggro controller picks hoverMob a frame after
+					-- m1Attack starts the lease, and clearing it here meant the hover never began
 					ZQ5.lastPin = nil
-					ZQ5.lease = 0
 					ZQ5.hoverActive = false
 					hoverPadStop()
 					return
