@@ -4461,9 +4461,8 @@ elseif ids.Dungeon then
 									-- the tween's own up-phase would.
 									pcall(PadRiseClear, 12)
 								elseif acType == "tpcheck" or acType == "flycheck" then
-									pcall(function()
-										instatp(safePos)
-									end)
+									-- was instatp(safePos) straight up to the safe height; pad rise instead
+									pcall(PadRise, 12)
 									ValuesTable.shadowbanbypass = false
 									task.wait(3)
 									ValuesTable.shadowbanbypass = false
@@ -4526,13 +4525,11 @@ elseif ids.Dungeon then
 								local cur = PlayerHumpart.Position
 								local yOffset = offsetY or selected_Offset or (cur.Y + 200)
 								st.paused = true
-								pcall(function()
-									Facemouse()
-									task.wait(0.3)
-									PlayerHumpart.CFrame = CFrame.new(cur.X, yOffset, cur.Z)
-								end)
+								-- was a CFrame write straight up to yOffset (the safe height, up to 2600).
+								-- Ride the boss-farm pad up a wall's height instead, then carry on.
+								pcall(PadRise, 40)
 								task.wait(0.3)
-								st.dest = Vector3.new(targetCF.Position.X, yOffset, targetCF.Position.Z)
+								st.dest = targetCF.Position
 								st.paused = false
 							end
 							return nil
