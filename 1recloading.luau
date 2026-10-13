@@ -2224,6 +2224,55 @@ elseif ids.Dungeon then
 		end
 	end)
 
+	-- UN-RAGDOLL: the game's Ragdoll_Client (deleted above) is what normally puts us back
+	-- together after a ragdoll hit. Without it the body stayed limp forever (joints off,
+	-- isRagdolled stuck) and no move or hover could carry it. Rebuild after 1.5s.
+	task.spawn(function()
+		local since = nil
+		while true do
+			task.wait(0.25)
+			pcall(function()
+				local hum = Character and Character:FindFirstChildOfClass("Humanoid")
+				if not hum then
+					return
+				end
+				local limp = hum:GetAttribute("isRagdolled") == true
+				if not limp then
+					for _, m in ipairs(Character:GetDescendants()) do
+						if m:IsA("Motor6D") and not m.Enabled then
+							limp = true
+							break
+						end
+					end
+				end
+				if not limp then
+					since = nil
+					return
+				end
+				since = since or tick()
+				if tick() - since < 1.5 then
+					return
+				end
+				since = nil
+				for _, d in ipairs(Character:GetDescendants()) do
+					if d:IsA("Motor6D") then
+						d.Enabled = true
+					elseif d:IsA("BallSocketConstraint") or d:IsA("HingeConstraint") then
+						d:Destroy() -- the ragdoll's limb joints
+					end
+				end
+				pcall(function()
+					hum:SetAttribute("isRagdolled", false)
+				end)
+				if not (ZQ5 and (ZQ5.moving or ZQ5.hoverActive)) then
+					hum.PlatformStand = false
+					hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+				end
+				print("[RECOVER] ragdolled for 1.5s - put the joints back together")
+			end)
+		end
+	end)
+
 	-- STATE LOG (every 2s): what holds us and what the script thinks it is doing
 	task.spawn(function()
 		while true do
@@ -4433,7 +4482,7 @@ elseif ids.Dungeon then
 				return
 			end
 			local hum2 = Character and Character:FindFirstChildOfClass("Humanoid")
-			if (hum2 and hum2:GetAttribute("isRagdolled")) or (drift > 3 and st.lastSet.Y - h.Position.Y > 1.5) then
+			if drift > 3 and st.lastSet.Y - h.Position.Y > 1.5 then
 				-- knocked (a hit): carry on from where the hit left us. Snapping back UP to the
 				-- line is an instant rise -> "Y+ too fast" strike.
 				st.lastSet = h.Position
@@ -4459,9 +4508,26 @@ elseif ids.Dungeon then
 		end)
 
 		-- the poll runs on the normal scheduler, so it may yield (anticheat waits, hops)
+		local bestDist, bestAt = math.huge, tick()
 		pcall(function()
 			while not st.finished do
 				task.wait()
+				-- no progress for 3s (not paused): give up this move ("stuck" -> walkTo backs up
+				-- and re-paths). Was: stood in one spot forever with a limp body.
+				local hh = PlayerHumpart
+				if hh and not st.paused then
+					local d = (hh.Position - st.dest).Magnitude
+					if d < bestDist - 1 or (st.idx or 1) ~= (st.lastIdx or 1) then
+						bestDist, bestAt = d, tick()
+						st.lastIdx = st.idx
+					elseif tick() - bestAt > 3 then
+						print("[WALK] no progress for 3s at " .. tostring(hh.Position) .. ", ending this move")
+						st.reason = "stuck"
+						break
+					end
+				else
+					bestAt = tick()
+				end
 				if ctl.poll then
 					local r = ctl.poll(st)
 					if r then
@@ -5802,6 +5868,14 @@ elseif ids.Dungeon then
 				-- slowly afterwards.
 				local myHum = Character and Character:FindFirstChildOfClass("Humanoid")
 				local knocked = myHum and myHum:GetAttribute("isRagdolled")
+				if knocked then
+					ZQ5.knockSince = ZQ5.knockSince or tick()
+					if tick() - ZQ5.knockSince > 1 then
+						knocked = false -- stuck flag: carry on, the un-ragdoll loop fixes the body
+					end
+				else
+					ZQ5.knockSince = nil
+				end
 				local below = standAt.Y - hrp.Position.Y
 				if knocked or below > 1.5 or (hrp.Position - standAt).Magnitude > 6 then
 					pad.Position = hrp.Position - Vector3.new(0, HOVER_PAD_STAND, 0)
