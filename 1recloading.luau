@@ -4286,9 +4286,14 @@ elseif ids.Dungeon then
 				end
 			end
 			if st.paused then
+				-- hold the spot while paused (anticheat wait). Only zeroing velocity let gravity
+				-- pull us down 2-3 studs a frame with noclip on: fell through Floor 2 into the void.
+				st.pauseAt = st.pauseAt or h.Position
+				h.CFrame = CFrame.new(st.pauseAt) * (h.CFrame - h.CFrame.Position)
 				h.AssemblyLinearVelocity = Vector3.zero
 				return
 			end
+			st.pauseAt = nil
 
 			local pos = h.Position
 			local toTarget = st.dest - pos
