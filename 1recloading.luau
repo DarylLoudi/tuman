@@ -2245,6 +2245,9 @@ elseif ids.Dungeon then
 						end
 					end
 				end
+				if ZQ5 then
+					ZQ5.limp = limp
+				end
 				if not limp then
 					since = nil
 					return
@@ -2264,6 +2267,9 @@ elseif ids.Dungeon then
 				pcall(function()
 					hum:SetAttribute("isRagdolled", false)
 				end)
+				if ZQ5 then
+					ZQ5.limp = false
+				end
 				if not (ZQ5 and (ZQ5.moving or ZQ5.hoverActive)) then
 					hum.PlatformStand = false
 					hum:ChangeState(Enum.HumanoidStateType.GettingUp)
@@ -4416,6 +4422,13 @@ elseif ids.Dungeon then
 					mover:Destroy()
 				end
 			end
+			if ZQ5.limp then
+				-- ragdolled: never carry a limp body (moving a ragdoll got us "eliminated by
+				-- Game"). Leave it to the hit; carry on from wherever it lands.
+				st.lastSet = h.Position
+				st.pauseAt = nil
+				return
+			end
 			if st.paused then
 				-- hold the spot while paused (anticheat wait). Only zeroing velocity let gravity
 				-- pull us down 2-3 studs a frame with noclip on: fell through Floor 2 into the void.
@@ -4479,7 +4492,7 @@ elseif ids.Dungeon then
 
 		local driftConn = RunSvc.Heartbeat:Connect(function()
 			local h = PlayerHumpart
-			if not h or not st.lastSet or st.finished or st.paused then
+			if not h or not st.lastSet or st.finished or st.paused or ZQ5.limp then
 				return
 			end
 			local drift = (h.Position - st.lastSet).Magnitude
@@ -4523,7 +4536,7 @@ elseif ids.Dungeon then
 				-- no progress for 3s (not paused): give up this move ("stuck" -> walkTo backs up
 				-- and re-paths). Was: stood in one spot forever with a limp body.
 				local hh = PlayerHumpart
-				if hh and not st.paused then
+				if hh and not st.paused and not ZQ5.limp then
 					local d = (hh.Position - st.dest).Magnitude
 					if d < bestDist - 1 or (st.idx or 1) ~= (st.lastIdx or 1) then
 						bestDist, bestAt = d, tick()
@@ -5914,15 +5927,8 @@ elseif ids.Dungeon then
 				-- body pushed off the pin), move the pad under the body where it is and climb back
 				-- slowly afterwards.
 				local myHum = Character and Character:FindFirstChildOfClass("Humanoid")
-				local knocked = myHum and myHum:GetAttribute("isRagdolled")
-				if knocked then
-					ZQ5.knockSince = ZQ5.knockSince or tick()
-					if tick() - ZQ5.knockSince > 1 then
-						knocked = false -- stuck flag: carry on, the un-ragdoll loop fixes the body
-					end
-				else
-					ZQ5.knockSince = nil
-				end
+				-- ragdolled: hands off the whole time (the un-ragdoll loop clears a stuck flag)
+				local knocked = ZQ5.limp or (myHum and myHum:GetAttribute("isRagdolled"))
 				local below = standAt.Y - hrp.Position.Y
 				if knocked or below > 1.5 or (hrp.Position - standAt).Magnitude > 6 then
 					pad.Position = hrp.Position - Vector3.new(0, HOVER_PAD_STAND, 0)
