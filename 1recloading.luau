@@ -2508,12 +2508,16 @@ elseif ids.Dungeon then
 		["Hollow's Great Sword"] = 1000,
 		["Kraken Blade"] = 100,
 		["Vrael's Pipe"] = 90,
+		["Golden Hook"] = 95,
+		["Knight's Gauntlet"] = 85,
 	}
 	local WeaponsToFarm = {
 		["Dark Blade"] = true,
 		["Vrael's Pipe"] = true,
 		["Hollow's Great Sword"] = true,
 		["Kraken Blade"] = true,
+		["Golden Hook"] = true,
+		["Knight's Gauntlet"] = true,
 	}
 	local OwnedFarmedWeapons = {}
 	function eatFunction()
@@ -2595,6 +2599,8 @@ elseif ids.Dungeon then
 				["Vrael's Pipe"] = true,
 				["Kraken Blade"] = true,
 				["Hollow's Great Sword"] = true,
+				["Golden Hook"] = true,
+				["Knight's Gauntlet"] = true,
 			}
 
 			for _, v in pairs(workspace.Effects:GetChildren()) do
@@ -2890,6 +2896,8 @@ elseif ids.Dungeon then
 				or OwnedFarmedWeapons["Vrael's Pipe"]
 				or OwnedFarmedWeapons["Hollow's Great Sword"]
 				or OwnedFarmedWeapons["Dark Blade"]
+				or OwnedFarmedWeapons["Golden Hook"]
+				or OwnedFarmedWeapons["Knight's Gauntlet"]
 		end
 
 		-- STEP 1: SP RESET ESSENCE FIRST (PRIORITY)
@@ -3104,6 +3112,8 @@ elseif ids.Dungeon then
 				["Vrael's Pipe"] = true,
 				["Kraken Blade"] = true,
 				["Hollow's Great Sword"] = true,
+				["Golden Hook"] = true,
+				["Knight's Gauntlet"] = true,
 			}
 
 			for _, v in pairs(workspace.Effects:GetChildren()) do
@@ -3752,9 +3762,10 @@ elseif ids.Dungeon then
 						OwnedFarmedWeapons["Kraken Blade"]
 						or OwnedFarmedWeapons["Hollow's Great Sword"]
 						or OwnedFarmedWeapons["Dark Blade"]
+						or OwnedFarmedWeapons["Golden Hook"]
 					then
 						game:GetService("ReplicatedStorage").Events.stats:FireServer("SwordMastery", nil, available)
-					elseif OwnedFarmedWeapons["Vrael's Pipe"] then
+					elseif OwnedFarmedWeapons["Vrael's Pipe"] or OwnedFarmedWeapons["Knight's Gauntlet"] then
 						game:GetService("ReplicatedStorage").Events.stats:FireServer("Strength", nil, available)
 					elseif Others.MeleeRun then
 						-- melee run (no wanted weapon): Strength, up to 1150
@@ -6919,6 +6930,8 @@ elseif ids.Dungeon then
 							or OwnedFarmedWeapons["Vrael's Pipe"]
 							or OwnedFarmedWeapons["Hollow's Great Sword"]
 							or OwnedFarmedWeapons["Dark Blade"]
+							or OwnedFarmedWeapons["Golden Hook"]
+							or OwnedFarmedWeapons["Knight's Gauntlet"]
 
 						-- chests until we have haki AND a weapon (was: haki only -- with haki but no
 						-- weapon it went straight to the hub without opening a single chest)
