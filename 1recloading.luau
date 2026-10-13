@@ -3012,15 +3012,7 @@ elseif ids.Dungeon then
 				local currentHasWeapon = hasTargetWeapon()
 				local currentHasHaki = statsFolder.Stats.BusoMastery.Value ~= 0
 
-				-- no wanted weapon from the reachable rare chests (but haki): don't hop servers,
-				-- do this whole run with melee (Strength gets the points, see the stat loop) and
-				-- don't come back for chests
-				if not currentHasWeapon and currentHasHaki then
-					print("[CHEST] no wanted weapon from the reachable chests - melee for the rest of this run")
-					Others.MeleeRun = true
-					return
-				end
-
+				-- no wanted weapon from the reachable rare chests: back to the universe hub (below)
 				if not currentHasWeapon then
 					task.wait(2)
 					game:GetService("TeleportService"):Teleport(6360478118, game:GetService("Players").LocalPlayer)
@@ -3779,15 +3771,6 @@ elseif ids.Dungeon then
 						game:GetService("ReplicatedStorage").Events.stats:FireServer("SwordMastery", nil, available)
 					elseif OwnedFarmedWeapons["Vrael's Pipe"] or OwnedFarmedWeapons["Knight's Gauntlet"] then
 						game:GetService("ReplicatedStorage").Events.stats:FireServer("Strength", nil, available)
-					elseif Others.MeleeRun then
-						-- melee run (no wanted weapon): Strength, up to 1150
-						local strength = statsFolder.Stats.Strength.Value
-						local pts = math.min(1150 - strength, available)
-						if pts > 0 then
-							player.PlayerGui.Statistics.Main.TopOptions.Base.Input.Text = tostring(pts)
-							task.wait(0.2)
-							game:GetService("ReplicatedStorage").Events.stats:FireServer("Strength", nil, pts)
-						end
 					end
 				end
 			end
@@ -6980,12 +6963,12 @@ elseif ids.Dungeon then
 
 						-- chests until we have haki AND a weapon (was: haki only -- with haki but no
 						-- weapon it went straight to the hub without opening a single chest)
-						if (not hashaki or not hasRequiredWeapon) and not Others.MeleeRun then
+						if (not hashaki or not hasRequiredWeapon) then
 							hakiFarm()
 							return
 						end
 
-						if not hasRequiredWeapon and not Others.MeleeRun then
+						if not hasRequiredWeapon then
 							task.wait(2)
 							game:GetService("TeleportService")
 								:Teleport(6360478118, game:GetService("Players").LocalPlayer)
