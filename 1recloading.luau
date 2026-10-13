@@ -1807,10 +1807,9 @@ elseif ids.Dungeon then
 
 	local COLLIDE_PARTS = { HumanoidRootPart = true, Head = true, Torso = true, UpperTorso = true, LowerTorso = true }
 
-	-- NOCLIP: on only while travelling/hovering, collisions back on when idle. Turning it fully
-	-- off (false) made moves collide with Floor 1's trees: the key sits by a tree, the move got
-	-- stuck, and every stuck hop pad-rose 40 studs, climbing to Y 2380 and earning flight strikes.
-	local NOCLIP_ENABLED = true
+	-- NOCLIP OFF (your call): our body parts always collide. true = noclip only while travelling
+	-- or hovering, collisions back on when idle.
+	local NOCLIP_ENABLED = false
 	function noClip(Value)
 		if noClipConnection then
 			noClipConnection:Disconnect()
@@ -4329,9 +4328,10 @@ elseif ids.Dungeon then
 
 	-- where the stuck -> straight-line fallback is allowed: the Floor 1 maze and Floor 2
 	-- (the boss-gate lever sits in a lower room behind a doorway the navmesh does not connect)
+	local ALLOW_STRAIGHT_FALLBACK = false -- off: no straight lines through walls (no noclip)
 	local function inMaze()
 		local islands = workspace:FindFirstChild("Islands")
-		if not islands then
+		if not ALLOW_STRAIGHT_FALLBACK or not islands then
 			return false
 		end
 		local f1 = islands:FindFirstChild("Impel Base - Floor 1")
