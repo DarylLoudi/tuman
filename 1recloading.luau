@@ -2174,7 +2174,7 @@ elseif ids.Dungeon then
 				if busy or not PlayerHumpart or not PlayerHumpart.Parent then
 					return
 				end
-				if ZQ5.moving or ZQ5.hoverActive then
+				if ZQ5.moving or ZQ5.hoverActive or getgenv().ZQ_PAUSE then
 					return
 				end
 				local rise = scanRise()
@@ -4424,6 +4424,10 @@ elseif ids.Dungeon then
 		pcall(function()
 			while not st.finished do
 				task.wait()
+				if getgenv().ZQ_PAUSE then
+					st.reason = "paused"
+					break
+				end
 				-- no progress for 3s (not paused): give up this move ("stuck" -> walkTo backs up
 				-- and re-paths). Was: stood in one spot forever with a limp body.
 				local hh = PlayerHumpart
@@ -5768,6 +5772,12 @@ elseif ids.Dungeon then
 		RunSvc.Heartbeat:Connect(function(dt)
 			pcall(function()
 				local hrp = PlayerHumpart
+				if getgenv().ZQ_PAUSE then
+					ZQ5.hoverActive = false
+					ZQ5.lastPin = nil
+					hoverPadStop()
+					return
+				end
 				local active = leaseActive()
 					and ZQ5.hover
 					and not ZQ5.moving
@@ -6774,6 +6784,11 @@ elseif ids.Dungeon then
 	end)
 
 	while task.wait() do
+		-- getgenv().ZQ_PAUSE = true hands the character to an outside test script: the farm
+		-- loop, walks, the hover and the floor rescue all stand down until it is cleared
+		if getgenv().ZQ_PAUSE then
+			continue
+		end
 		if CanFarm then
 			noClip(true)
 
