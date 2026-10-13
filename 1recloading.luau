@@ -4341,14 +4341,7 @@ elseif ids.Dungeon then
 			st.pauseAt = nil
 
 			local pos = h.Position
-			-- always UPRIGHT (yaw only). PlatformStand lets the body tip over, and keeping
-			-- whatever tilt it had made us slide along lying down ("ragdolled while tweening")
-			local look = h.CFrame.LookVector
-			local flatLook = Vector3.new(look.X, 0, look.Z)
-			if flatLook.Magnitude < 0.1 then
-				flatLook = Vector3.new(0, 0, -1)
-			end
-			local rot = CFrame.lookAt(Vector3.zero, flatLook.Unit)
+			local rot = h.CFrame - h.CFrame.Position
 			local route = st.route
 			local budget = st.speed * dt
 			local toTarget = st.dest - pos
@@ -4393,13 +4386,8 @@ elseif ids.Dungeon then
 				end
 			end
 
-			local travel = Vector3.new(nextPos.X - pos.X, 0, nextPos.Z - pos.Z)
-			if travel.Magnitude > 0.01 then
-				rot = CFrame.lookAt(Vector3.zero, travel.Unit) -- face where we're going
-			end
 			h.CFrame = CFrame.new(nextPos) * rot
 			h.AssemblyLinearVelocity = Vector3.zero
-			h.AssemblyAngularVelocity = Vector3.zero
 			st.lastSet = nextPos
 		end)
 
@@ -4423,10 +4411,8 @@ elseif ids.Dungeon then
 				-- No snap back (a teleport for the server), no stopping the move.
 				st.lastSet = h.Position
 			elseif drift > 0.05 then
-				local lv = h.CFrame.LookVector
-				local fl = Vector3.new(lv.X, 0, lv.Z)
-				local rot = fl.Magnitude > 0.1 and CFrame.lookAt(Vector3.zero, fl.Unit) or CFrame.new()
-				h.CFrame = CFrame.new(st.lastSet) * rot -- upright
+				local rot = h.CFrame - h.CFrame.Position
+				h.CFrame = CFrame.new(st.lastSet) * rot
 			end
 			h.AssemblyLinearVelocity = Vector3.zero
 			h.AssemblyAngularVelocity = Vector3.zero
