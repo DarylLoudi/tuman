@@ -4401,7 +4401,8 @@ elseif ids.Dungeon then
 
 	-- the exact target is often unreachable for the navmesh (a chest or key is a solid model
 	-- standing right there): try points in a ring around it; the last few studs are a short hop
-	local RING = { Vector3.new(5, 0, 0), Vector3.new(-5, 0, 0), Vector3.new(0, 0, 5), Vector3.new(0, 0, -5),
+	local RING = { Vector3.new(3, 0, 0), Vector3.new(-3, 0, 0), Vector3.new(0, 0, 3), Vector3.new(0, 0, -3),
+		Vector3.new(5, 0, 0), Vector3.new(-5, 0, 0), Vector3.new(0, 0, 5), Vector3.new(0, 0, -5),
 		Vector3.new(4, 0, 4), Vector3.new(-4, 0, 4), Vector3.new(4, 0, -4), Vector3.new(-4, 0, -4) }
 	local function computePath(from, dest)
 		local wps, minY, maxY = computePathExact(from, dest)
@@ -6993,6 +6994,10 @@ elseif ids.Dungeon then
 
 						LastPlaceTween = "secondfloorPart5"
 						targetPosition = Vector3.new(3199.31103515625, 2343.738037109375, -20533.36328125)
+						-- walk right up to the lever itself (the pull needs us within 4 studs)
+						pcall(function()
+							targetPosition = workspace.Islands["Impel Base - Floor 2"].Interactables.BossGateLever.Lever["Meshes/Lev_Cube.004"].Position
+						end)
 						targetFloorPosition = Vector3.new(3199.31103515625, 2343.738037109375, -20533.36328125)
 						local Distance = (targetPosition - PlayerHumpart.Position).magnitude
 						local Time = GetTime(Distance, Spood or Speed)
@@ -7005,7 +7010,7 @@ elseif ids.Dungeon then
 							(
 								PlayerHumpart.Position
 								- workspace.Islands["Impel Base - Floor 2"].Interactables.BossGateLever.Lever["Meshes/Lev_Cube.004"].Position
-							).Magnitude <= 15
+							).Magnitude <= 4
 						then
 							if
 								workspace.Islands["Impel Base - Floor 2"].Interactables.BossGateLever.Lever["Meshes/Lev_Cube.004"]:FindFirstChild(
