@@ -2900,7 +2900,11 @@ elseif ids.Dungeon then
 				if meshPart then
 					if Value:FindFirstChild("Lock") then
 						local ChestData = ChestInfo[meshPart.MeshId]
-						if ChestData and ChestData.Name == "Rare Chest" then
+						if
+							ChestData
+							and ChestData.Name == "Rare Chest"
+							and not (Others.SkipChests and Others.SkipChests[meshPart])
+						then
 							table.insert(RareChests, meshPart)
 						elseif ChestData and ChestData.Name ~= "Common Chest" then
 							Value:Destroy()
@@ -2965,6 +2969,20 @@ elseif ids.Dungeon then
 				HumPart = getNearestHumPart(RareChests)
 				if HumPart then
 					Others.LockedChest = HumPart
+				end
+			end
+			-- a chest we cannot reach / open (no path, prompt never fires) stayed in the list
+			-- forever, so "every chest opened -> no weapon -> back to the universe hub" never
+			-- happened. Give each chest 25s, then skip it.
+			Others.SkipChests = Others.SkipChests or setmetatable({}, { __mode = "k" })
+			Others.ChestSince = Others.ChestSince or setmetatable({}, { __mode = "k" })
+			if HumPart then
+				Others.ChestSince[HumPart] = Others.ChestSince[HumPart] or tick()
+				if tick() - Others.ChestSince[HumPart] > 25 then
+					print("[CHEST] could not open a chest in 25s, skipping it")
+					Others.SkipChests[HumPart] = true
+					Others.LockedChest = nil
+					HumPart = nil
 				end
 			end
 			if HumPart then
