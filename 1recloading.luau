@@ -2329,6 +2329,37 @@ elseif ids.Dungeon then
 		return ok
 	end
 
+	-- near mob with a clear straight line to it (no wall / floor between: the hover flies
+	-- straight, so through a wall it would earn noclip flags) and on about our level
+	function mobInReach(npc)
+		local mhrp = npc and npc:FindFirstChild("HumanoidRootPart")
+		local root = PlayerHumpart
+		if not mhrp or not root then
+			return false
+		end
+		local d = mhrp.Position - root.Position
+		if math.abs(d.Y) > 25 or Vector3.new(d.X, 0, d.Z).Magnitude > 45 then
+			return false
+		end
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Exclude
+		params.FilterDescendantsInstances = {
+			Character,
+			npc,
+			workspace:FindFirstChild("NPCs"),
+			workspace:FindFirstChild("Effects"),
+			workspace:FindFirstChild("PlayerCharacters"),
+		}
+		pcall(function()
+			params.RespectCanCollide = true
+		end)
+		-- from head height to a point above the mob (where we will hover)
+		local from = root.Position + Vector3.new(0, 1.5, 0)
+		local to = mhrp.Position + Vector3.new(0, 5, 0)
+		local hit = workspace:Raycast(from, to - from, params)
+		return hit == nil
+	end
+
 	function controlTower(pos, speed)
 		if not PlayerHumpart or not Character or not CanFarm then
 			return
@@ -2361,6 +2392,10 @@ elseif ids.Dungeon then
 				end
 				if alreadyOnIt then
 					m1Distance = math.max(m1Distance, 45)
+				elseif m1Distance < 45 and Npc:GetAttribute("RealName") ~= "Kramprus" and mobInReach(Npc) then
+					-- a mob near and in plain sight: fly to it with the mob hover (pad) and stay
+					-- above it, instead of walking up to it with the ground walker
+					m1Distance = 45
 				end
 
 				if GetMagnitudeIgnoringY(Npc.HumanoidRootPart.Position) < m1Distance then
@@ -4261,13 +4296,18 @@ elseif ids.Dungeon then
 			end)
 		end
 
+		-- ctl.route: a list of points followed in ONE move (no stop, no humanoid state reset
+		-- between them). Per-point moves toggled PlatformStand / GettingUp at every waypoint:
+		-- the humanoid stood up for a frame and pushed the root up/down -> visible bobbing.
+		local route = ctl.route
 		local st = {
 			finished = false,
 			reason = nil,
 			lastSet = nil,
 			stuckT = 0,
 			speed = speed or 80,
-			dest = destination,
+			dest = route and route[1] or destination,
+			idx = 1,
 			paused = false,
 		}
 		local id = "ZephyronMove_" .. tostring(math.random(1, 1e9))
@@ -4296,18 +4336,35 @@ elseif ids.Dungeon then
 			st.pauseAt = nil
 
 			local pos = h.Position
+			local rot = h.CFrame - h.CFrame.Position
+			local budget = st.speed * dt
 			local toTarget = st.dest - pos
 			local dist = toTarget.Magnitude
-			local rot = h.CFrame - h.CFrame.Position
+			-- reached a route point: carry the rest of this frame's step on to the next one
+			while route and st.idx < #route and dist <= math.max(budget, 0.5) do
+				budget = budget - dist
+				pos = st.dest
+				if ctl.onReach then
+					pcall(ctl.onReach, st.idx, st.dest)
+				end
+				st.idx = st.idx + 1
+				st.dest = route[st.idx]
+				toTarget = st.dest - pos
+				dist = toTarget.Magnitude
+			end
 
 			if dist <= 0.5 then
 				h.CFrame = CFrame.new(st.dest) * rot
 				h.AssemblyLinearVelocity = Vector3.zero
+				st.lastSet = st.dest
+				if route and ctl.onReach then
+					pcall(ctl.onReach, st.idx, st.dest)
+				end
 				st.finished = true
 				return
 			end
 
-			local nextPos = pos + toTarget.Unit * math.min(st.speed * dt, dist)
+			local nextPos = pos + toTarget.Unit * math.min(math.max(budget, 0), dist)
 
 			if ctl.wallMargin then
 				local valid, blocked = getValidMovementPosition(pos, nextPos, ctl.wallMargin)
@@ -4563,38 +4620,40 @@ elseif ids.Dungeon then
 				print(string.format("[WALK] %d waypoints to %s, ground Y %.0f..%.0f", #wps, tostring(dest), minY, maxY))
 			end
 
+			-- build the whole route first (a point over steps/ledges so the line never cuts a
+			-- floor edge), then walk it in one continuous move: no stop-and-stand per waypoint
+			local route = {}
+			local prev = from
+			for i = 2, #wps do
+				local wp = (i == #wps and not nearOnly) and dest or standPointAt(wps[i].Position)
+				local mid = (prev + wp) / 2
+				local midStand = standPointAt(mid, 2)
+				if midStand.Y > mid.Y + 0.3 then
+					table.insert(route, midStand)
+				end
+				table.insert(route, wp)
+				prev = wp
+			end
+
 			local lastGood = from
 			local failed = nil
 			ZQ5.walking = true
-			for i = 2, #wps do
-				local wp = (i == #wps and not nearOnly) and dest or standPointAt(wps[i].Position)
-				-- a step / ledge between two waypoints: the straight line cut through its edge
-				-- (body a bit inside the floor -> noclip flag). Insert a point over it.
-				local fromP = PlayerHumpart.Position
-				local mid = (fromP + wp) / 2
-				local midStand = standPointAt(mid, 2)
-				if midStand.Y > mid.Y + 0.3 then
-					local _, r0 = ZQ5.move(midStand, WALK_SPEED, { poll = poll })
-					if r0 == "stuck" or r0 == "noclip" then
-						failed = r0
-						break
-					elseif r0 then
-						ZQ5.walking = false
-						return false, r0
-					end
-				end
-				-- no wall check: it pushed us off along the hit surface's normal (a floor or
-				-- step under the line -> straight up). The pathfinding route is the wall check.
-				local _, reason = ZQ5.move(wp, WALK_SPEED, { poll = poll })
+			if #route > 0 then
+				local _, reason = ZQ5.move(route[#route], WALK_SPEED, {
+					poll = poll,
+					route = route,
+					onReach = function(_, p)
+						lastGood = p
+						ZQ5.lastWalkCall = tick()
+					end,
+				})
 				ZQ5.lastWalkCall = tick()
 				if reason == "stuck" or reason == "noclip" then
 					failed = reason
-					break
 				elseif reason then
 					ZQ5.walking = false
 					return false, reason
 				end
-				lastGood = wp
 			end
 			ZQ5.walking = false
 			if not failed then
