@@ -4345,9 +4345,11 @@ elseif ids.Dungeon then
 			return false, "nohrp"
 		end
 
-		-- a ground-level target (chest, key, floor point) would put the root in the floor
-		local gy = groundYAt(dest)
-		if gy and dest.Y < gy + ROOT_ABOVE_GROUND then
+		-- walking ends ON the ground: a ground-level target (chest, key) would put the root in
+		-- the floor, and an air target (a point over a mob) would leave us floating -> flight
+		-- strikes. Getting above a mob is the hover's job.
+		local gy = groundYAt(dest, 60)
+		if gy then
 			dest = Vector3.new(dest.X, gy + ROOT_ABOVE_GROUND, dest.Z)
 		end
 
@@ -5507,13 +5509,9 @@ elseif ids.Dungeon then
 
 			MovementSystem:CancelInSpawn()
 
-			if checkAnticheatNotifications() then
-				why("waiting for the anticheat notification to clear")
-				repeat
-					task.wait(0.1)
-				until not checkAnticheatNotifications()
-				return false
-			end
+			-- an anticheat notice used to block here until it cleared. Floating after a walk
+			-- earns a flight-strike notice that never clears while floating -> no hover, ever.
+			-- The pad hover is grounded, so just engage.
 
 			ZQ5.enemy = enemy
 			ZQ5.offset = offset3D
@@ -6315,7 +6313,9 @@ elseif ids.Dungeon then
 						end
 						foundVera = true
 						Npc = tutorialVera
-						targetPosition = tutorialVera.HumanoidRootPart.Position + Vector3.new(0, 20, 0)
+						-- walk to HER (ground level); the pad hover lifts us over her once close.
+						-- Was +20: the walk ended 20 studs in the air -> flight strikes.
+						targetPosition = tutorialVera.HumanoidRootPart.Position
 						targetFloorPosition = tutorialVera.HumanoidRootPart.Position
 						selected_Offset = targetPosition.Y
 						if GetMagnitudeIgnoringY(tutorialVera.HumanoidRootPart.Position) < 20 then
