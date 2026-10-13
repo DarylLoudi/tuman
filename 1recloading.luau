@@ -4404,10 +4404,15 @@ elseif ids.Dungeon then
 				return
 			end
 			local hum2 = Character and Character:FindFirstChildOfClass("Humanoid")
-			if drift > 3 and st.lastSet.Y - h.Position.Y > 1.5 then
-				-- knocked (a hit): carry on from where the hit left us. Snapping back UP to the
-				-- line is an instant rise -> "Y+ too fast" strike.
+			if drift > 3 then
+				-- knocked (an NPC hit): never snap back to the line. The snap is a teleport for
+				-- the server (tp check -> a 4s pause, "Y+ too fast" when it is upward), and every
+				-- hit in the maze meant stop... go... stop. End the move; walkTo re-paths from
+				-- wherever the hit left us.
 				st.lastSet = h.Position
+				st.reason = "knocked"
+				st.finished = true
+				return
 			elseif drift > 0.05 then
 				local rot = h.CFrame - h.CFrame.Position
 				h.CFrame = CFrame.new(st.lastSet) * rot
@@ -4658,7 +4663,9 @@ elseif ids.Dungeon then
 		end
 
 		ZQ5.lastWalkResult = nil
-		for attempt = 1, 4 do
+		local attempt, knocks = 0, 0
+		while attempt < 4 and knocks < 15 do
+			attempt = attempt + 1
 			local from = PlayerHumpart.Position
 			local wps, minY, maxY, nearOnly = computePath(from, dest)
 			if not wps then
@@ -4704,7 +4711,7 @@ elseif ids.Dungeon then
 					end,
 				})
 				ZQ5.lastWalkCall = tick()
-				if reason == "stuck" or reason == "noclip" then
+				if reason == "stuck" or reason == "noclip" or reason == "knocked" then
 					failed = reason
 				elseif reason then
 					ZQ5.walking = false
@@ -4715,9 +4722,17 @@ elseif ids.Dungeon then
 			if not failed then
 				return true, nil
 			end
-			print(string.format("[WALK] %s at %s, backing up to %s and re-pathing (try %d)", failed, tostring(PlayerHumpart.Position), tostring(lastGood), attempt))
-			ZQ5.move(lastGood, WALK_SPEED, {})
-			task.wait(0.3)
+			if failed == "knocked" then
+				-- hit off the path: just path again from here, no back-up (that walked us back
+				-- into the mob that hit us)
+				attempt = attempt - 1 -- a hit is not a failed path: doesn't use up a try
+				knocks = knocks + 1
+				print(string.format("[WALK] knocked off the path at %s, re-pathing (try %d)", tostring(PlayerHumpart.Position), attempt))
+			else
+				print(string.format("[WALK] %s at %s, backing up to %s and re-pathing (try %d)", failed, tostring(PlayerHumpart.Position), tostring(lastGood), attempt))
+				ZQ5.move(lastGood, WALK_SPEED, {})
+				task.wait(0.3)
+			end
 		end
 		if inMaze() then
 			return straightThrough(dest, poll, "re-paths kept failing")
