@@ -4435,6 +4435,30 @@ elseif ids.Dungeon then
 		return hit and hit.Position.Y or nil
 	end
 
+	-- where the root should be when standing at `pos`: on the REAL ground there (navmesh
+	-- waypoints sit a little above/below the floor -> we bobbed up and down and sometimes ran a
+	-- bit under the floor), at the character's own standing height plus a small margin
+	local function standHeight()
+		local hum = Character and Character:FindFirstChildOfClass("Humanoid")
+		local root = PlayerHumpart
+		if hum and root then
+			local h = hum.HipHeight + root.Size.Y / 2
+			if hum.RigType == Enum.HumanoidRigType.R6 then
+				h = 2 + root.Size.Y / 2 -- R6 legs are 2 studs, HipHeight is 0
+			end
+			return math.max(h, 2.5) + 0.4
+		end
+		return ROOT_ABOVE_GROUND + 0.4
+	end
+	function standPointAt(pos, probeUp)
+		local up = probeUp or 3
+		local gy = groundYAt(pos + Vector3.new(0, up, 0), up + 8)
+		if gy then
+			return Vector3.new(pos.X, gy + standHeight(), pos.Z)
+		end
+		return Vector3.new(pos.X, pos.Y + ROOT_ABOVE_GROUND, pos.Z)
+	end
+
 	local function computePathExact(from, dest)
 		local ok, path = pcall(function()
 			local p = PathfindingService:CreatePath({
@@ -4501,7 +4525,7 @@ elseif ids.Dungeon then
 		-- strikes. Getting above a mob is the hover's job.
 		local gy = groundYAt(dest, 60)
 		if gy then
-			dest = Vector3.new(dest.X, gy + ROOT_ABOVE_GROUND, dest.Z)
+			dest = Vector3.new(dest.X, gy + standHeight(), dest.Z)
 		end
 
 		-- maze: no real progress for MAZE_STUCK_SECONDS -> straight line from here
@@ -4538,7 +4562,22 @@ elseif ids.Dungeon then
 			local failed = nil
 			ZQ5.walking = true
 			for i = 2, #wps do
-				local wp = (i == #wps and not nearOnly) and dest or (wps[i].Position + Vector3.new(0, ROOT_ABOVE_GROUND, 0))
+				local wp = (i == #wps and not nearOnly) and dest or standPointAt(wps[i].Position)
+				-- a step / ledge between two waypoints: the straight line cut through its edge
+				-- (body a bit inside the floor -> noclip flag). Insert a point over it.
+				local fromP = PlayerHumpart.Position
+				local mid = (fromP + wp) / 2
+				local midStand = standPointAt(mid, 2)
+				if midStand.Y > mid.Y + 0.3 then
+					local _, r0 = ZQ5.move(midStand, WALK_SPEED, { poll = poll })
+					if r0 == "stuck" or r0 == "noclip" then
+						failed = r0
+						break
+					elseif r0 then
+						ZQ5.walking = false
+						return false, r0
+					end
+				end
 				-- no wall check: it pushed us off along the hit surface's normal (a floor or
 				-- step under the line -> straight up). The pathfinding route is the wall check.
 				local _, reason = ZQ5.move(wp, WALK_SPEED, { poll = poll })
