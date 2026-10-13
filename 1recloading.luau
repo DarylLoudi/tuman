@@ -4439,8 +4439,16 @@ elseif ids.Dungeon then
 								local safePos = Vector3.new(cur.X, safeY, cur.Z)
 								task.wait(0.5)
 								if acType == "noclip" then
+									-- was instatp(safePos): safePos is straight above us at the tween's
+									-- safe height (up to 2600), which is within the instant-TP radius, so
+									-- it snapped us hundreds of studs up. Rise gently instead, the way
+									-- the tween's own up-phase would.
 									pcall(function()
-										instatp(safePos)
+										for _ = 1, 12 do
+											PlayerHumpart.CFrame = PlayerHumpart.CFrame + Vector3.new(0, 1, 0)
+											PlayerHumpart.AssemblyLinearVelocity = Vector3.zero
+											task.wait(0.05)
+										end
 									end)
 								elseif acType == "tpcheck" or acType == "flycheck" then
 									pcall(function()
