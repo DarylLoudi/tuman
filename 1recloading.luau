@@ -3629,13 +3629,12 @@ elseif ids.Dungeon then
 							BlugoriAnims = false
 							Checker = true
 						elseif track.Animation.AnimationId == "rbxassetid://" .. animationIdToCheck3 then
-							-- Elo's slam: the hover slides sideways out of it (see ELO_DODGE_*), no rise
+							-- Elo's slam: the hover rises straight up out of it (see ELO_DODGE_*)
 							Checker = true
 							if ZQ5 then
 								if tick() > (ZQ5.dodgeUntil or 0) then
 									ZQ5.dodgeStart = tick()
-									ZQ5.dodgeDir = nil
-									print("[ELO] slam, dodging sideways")
+									print("[ELO] slam, dodging up")
 								end
 								ZQ5.dodgeMob = Npc
 								ZQ5.dodgeUntil = math.max(tick() + 0.5, ZQ5.dodgeStart + 1.8)
@@ -5759,7 +5758,7 @@ elseif ids.Dungeon then
 		-- hover pushed up at 15-40 studs/s and still sat at ground height on tutorial Vera.
 		local HOVER_PAD_SPEED, HOVER_PAD_STAND = 30, 4
 		local HOVER_CLIMB_SPEED = 14 -- max studs/s up
-		local ELO_DODGE_DIST, ELO_DODGE_UP, ELO_DODGE_SPEED = 30, 10, 45
+		local ELO_DODGE_HEIGHT, ELO_DODGE_SPEED = 40, 35 -- studs above Elo, climb speed
 		local function hoverPadStop()
 			if ZQ5.hoverPad and ZQ5.hoverPad.Parent then
 				ZQ5.hoverPad:Destroy()
@@ -5897,35 +5896,11 @@ elseif ids.Dungeon then
 				local targetPos = hoverPointFor(mob) + lead
 				local padSpeed = HOVER_PAD_SPEED
 
-				-- ELO'S SLAM: slide sideways out of it at hover height (no going up)
-				if ZQ5.dodgeMob == mob and tick() < (ZQ5.dodgeUntil or 0) then
-					if not ZQ5.dodgeDir then
-						local base = Vector3.new(standAt.X - mhrp.Position.X, 0, standAt.Z - mhrp.Position.Z)
-						if base.Magnitude < 1 then
-							local lv = mhrp.CFrame.LookVector
-							base = Vector3.new(-lv.X, 0, -lv.Z)
-						end
-						base = base.Unit
-						local dp = RaycastParams.new()
-						dp.FilterType = Enum.RaycastFilterType.Exclude
-						dp.FilterDescendantsInstances = { Character, workspace:FindFirstChild("NPCs"), workspace:FindFirstChild("Effects") }
-						pcall(function()
-							dp.RespectCanCollide = true
-						end)
-						local from = mhrp.Position + Vector3.new(0, ELO_DODGE_UP, 0)
-						for _, a in ipairs({ 0, 45, -45, 90, -90, 135, -135, 180 }) do
-							local d = (CFrame.Angles(0, math.rad(a), 0) * base)
-							if not workspace:Raycast(from, d * (ELO_DODGE_DIST + 3), dp) then
-								ZQ5.dodgeDir = d
-								break
-							end
-						end
-						ZQ5.dodgeDir = ZQ5.dodgeDir or base
-					end
-					targetPos = mhrp.Position + ZQ5.dodgeDir * ELO_DODGE_DIST + Vector3.new(0, ELO_DODGE_UP, 0)
+				-- ELO'S SLAM: rise straight up above Elo out of the slam, then come back down
+				local dodging = ZQ5.dodgeMob == mob and tick() < (ZQ5.dodgeUntil or 0)
+				if dodging then
+					targetPos = Vector3.new(mhrp.Position.X, mhrp.Position.Y + ELO_DODGE_HEIGHT, mhrp.Position.Z)
 					padSpeed = ELO_DODGE_SPEED
-				else
-					ZQ5.dodgeDir = nil
 				end
 
 				local goal = targetPos - Vector3.new(0, HOVER_PAD_STAND, 0)
@@ -5933,7 +5908,8 @@ elseif ids.Dungeon then
 				if toGoal.Magnitude > 0.05 then
 					local step = toGoal.Unit * math.min(padSpeed * (dt or 1 / 60), toGoal.Magnitude)
 					-- climb slowly (fast rises earn "Y+ too fast"), slower still right after a hit
-					local maxUp = (tick() - (ZQ5.hitAt or 0) < 2 and 6 or HOVER_CLIMB_SPEED) * (dt or 1 / 60)
+					local maxUp = (dodging and ELO_DODGE_SPEED or (tick() - (ZQ5.hitAt or 0) < 2 and 6 or HOVER_CLIMB_SPEED))
+						* (dt or 1 / 60)
 					if step.Y > maxUp then
 						step = Vector3.new(step.X, maxUp, step.Z)
 					end
