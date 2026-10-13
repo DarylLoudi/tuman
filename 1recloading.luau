@@ -4319,6 +4319,11 @@ elseif ids.Dungeon then
 	-- Falls back to the old straight move when no path is found.
 	local PathfindingService = game:GetService("PathfindingService")
 	local WALK_SPEED = 30
+	-- true: every move is ONE straight ZQ5.move line to the target, through walls (noclip is
+	-- on while moving), no pathfinding, no wall check, and noclip flags do not stop it.
+	-- false: walk pathfinding waypoints around walls.
+	local STRAIGHT_THROUGH_WALLS = true
+	ZQ5.straight = STRAIGHT_THROUGH_WALLS
 	local ROOT_ABOVE_GROUND = 3
 
 	-- ground under `pos`, looking DOWN only from just above it (casting from higher up used to
@@ -4404,6 +4409,10 @@ elseif ids.Dungeon then
 		local gy = groundYAt(dest, 60)
 		if gy then
 			dest = Vector3.new(dest.X, gy + ROOT_ABOVE_GROUND, dest.Z)
+		end
+
+		if STRAIGHT_THROUGH_WALLS then
+			return ZQ5.move(dest, WALK_SPEED, { poll = poll })
 		end
 
 		for attempt = 1, 4 do
@@ -4669,7 +4678,9 @@ elseif ids.Dungeon then
 							local acType = checkAnticheatNotifications()
 							-- while walking a path, a noclip flag means we left it: let walkTo back up
 							-- and re-path (the notice lingers ~2s, so ignore repeats for 3s)
-							if acType == "noclip" then
+							if acType == "noclip" and ZQ5.straight then
+								acType = nil -- going through walls on purpose: keep going
+							elseif acType == "noclip" then
 								if tick() < (ZQ5.acIgnoreUntil or 0) then
 									acType = nil
 								else
