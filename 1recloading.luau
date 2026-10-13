@@ -2803,50 +2803,17 @@ elseif ids.Dungeon then
 		return false
 	end
 
-	-- log every weapon-looking thing that appears, so a missed pickup shows WHERE the drop was
-	do
-		local seenDrop = setmetatable({}, { __mode = "k" })
-		local function logDrop(inst)
-			if seenDrop[inst] then
-				return
-			end
-			local n = string.lower(inst.Name)
-			if wantedWeaponName(inst.Name) or n:find("blade") or n:find("sword") or n:find("pipe")
-				or n:find("hook") or n:find("gauntlet") then
-				seenDrop[inst] = true
-				print(string.format("[DROP] %s (%s) in %s, wanted=%s", inst.Name, inst.ClassName,
-					inst.Parent and inst.Parent:GetFullName() or "?", tostring(wantedWeaponName(inst.Name))))
-			end
-		end
-		pcall(function()
-			workspace.Effects.ChildAdded:Connect(logDrop)
-			workspace.ChildAdded:Connect(logDrop)
-		end)
-	end
-
 	function pickupWeaponDrops()
 		for weaponName, shouldFarm in pairs(WeaponsToFarm) do
 			if shouldFarm and not OwnedFarmedWeapons[weaponName] then
 				-- For Kraken Blade, search all effects for any matching name
 				local weaponDrop = nil
-				-- look in Effects (and one level inside its folders) and in workspace itself:
-				-- drops don't always land straight in Effects
-				local function scan(container, depth)
-					if weaponDrop or not container then
-						return
-					end
-					for _, child in ipairs(container:GetChildren()) do
-						if wantedWeaponName(child.Name) == weaponName and not child:IsDescendantOf(Character) then
-							weaponDrop = child
-							return
-						end
-						if depth > 0 and child:IsA("Folder") then
-							scan(child, depth - 1)
-						end
+				for _, child in pairs(workspace.Effects:GetChildren()) do
+					if wantedWeaponName(child.Name) == weaponName then
+						weaponDrop = child
+						break
 					end
 				end
-				scan(workspace.Effects, 1)
-				scan(workspace, 0)
 
 				if weaponDrop then
 					local part = nil
