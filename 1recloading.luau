@@ -4598,6 +4598,16 @@ elseif ids.Dungeon then
 			return straightThrough(dest, poll, "no progress")
 		end
 
+		-- still up in the air (a hover just ended and its pad is gone): come straight down to
+		-- standing height first, pathfinding from mid-air fails and the body just dropped
+		do
+			local p0 = PlayerHumpart.Position
+			local g0 = groundYAt(p0, 80)
+			if g0 and p0.Y - (g0 + standHeight()) > 3 then
+				ZQ5.move(Vector3.new(p0.X, g0 + standHeight(), p0.Z), WALK_SPEED, { poll = poll })
+			end
+		end
+
 		ZQ5.lastWalkResult = nil
 		for attempt = 1, 4 do
 			local from = PlayerHumpart.Position
