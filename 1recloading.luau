@@ -4263,7 +4263,7 @@ elseif ids.Dungeon then
 
 	-- ground under `pos`, looking DOWN only from just above it (casting from higher up used to
 	-- hit ceilings / tree crowns over the target and lift the destination onto them)
-	local function groundYAt(pos)
+	local function groundYAt(pos, depth)
 		local params = RaycastParams.new()
 		params.FilterType = Enum.RaycastFilterType.Exclude
 		params.FilterDescendantsInstances = {
@@ -4274,14 +4274,49 @@ elseif ids.Dungeon then
 		pcall(function()
 			params.RespectCanCollide = true
 		end)
-		local hit = workspace:Raycast(pos + Vector3.new(0, 1, 0), Vector3.new(0, -14, 0), params)
+		local hit = workspace:Raycast(pos + Vector3.new(0, 1, 0), Vector3.new(0, -(depth or 14), 0), params)
 		return hit and hit.Position.Y or nil
 	end
 
+	local function computePath(from, dest)
+		local ok, path = pcall(function()
+			local p = PathfindingService:CreatePath({
+				AgentRadius = 2.5,
+				AgentHeight = 6,
+				AgentCanJump = true,
+				WaypointSpacing = 6,
+			})
+			p:ComputeAsync(from, dest)
+			return p
+		end)
+		if not (ok and path and path.Status == Enum.PathStatus.Success) then
+			return nil
+		end
+		local wps = path:GetWaypoints()
+		-- sanity, in GROUND heights: a path diving well below both ends (a lower level / under
+		-- the floor) or climbing far above them (onto wall tops) is rejected
+		local fromG = groundYAt(from, 60) or (from.Y - ROOT_ABOVE_GROUND)
+		local destG = groundYAt(dest, 60) or (dest.Y - ROOT_ABOVE_GROUND)
+		local lowEnd, highEnd = math.min(fromG, destG) - 6, math.max(fromG, destG) + 20
+		local minY, maxY = math.huge, -math.huge
+		for _, w in ipairs(wps) do
+			minY = math.min(minY, w.Position.Y)
+			maxY = math.max(maxY, w.Position.Y)
+		end
+		if minY < lowEnd or maxY > highEnd then
+			print(string.format("[WALK] rejected path to %s: waypoint Y %.0f..%.0f outside %.0f..%.0f", tostring(dest), minY, maxY, lowEnd, highEnd))
+			return nil
+		end
+		return wps, minY, maxY
+	end
+
+	-- Walk dest along a path. Every segment keeps the wall check: hitting a wall ("stuck") or
+	-- the game's noclip flag ("noclip") means we left the path (knockback, a recovery lift...),
+	-- so back up to the last waypoint we reached cleanly and compute a fresh path from there.
+	-- No more rising out of trouble: rising inside a tall maze wall climbed 150 studs and kicked.
 	local lastWalkLog = 0
 	function ZQ5.walkTo(dest, poll)
-		local h = PlayerHumpart
-		if not h or not h.Parent then
+		if not PlayerHumpart or not PlayerHumpart.Parent then
 			return false, "nohrp"
 		end
 
@@ -4291,51 +4326,42 @@ elseif ids.Dungeon then
 			dest = Vector3.new(dest.X, gy + ROOT_ABOVE_GROUND, dest.Z)
 		end
 
-		local ok, path = pcall(function()
-			local p = PathfindingService:CreatePath({
-				AgentRadius = 2.5,
-				AgentHeight = 6,
-				AgentCanJump = true,
-				WaypointSpacing = 6,
-			})
-			p:ComputeAsync(h.Position, dest)
-			return p
-		end)
-
-		local wps = ok and path and path.Status == Enum.PathStatus.Success and path:GetWaypoints() or nil
-
-		-- sanity: a path that dives well below both ends (a lower level / under the floor) or
-		-- climbs far above them (onto wall tops) is what put us inside floors and walls
-		if wps then
-			local lowEnd = math.min(h.Position.Y, dest.Y) - ROOT_ABOVE_GROUND - 4
-			local highEnd = math.max(h.Position.Y, dest.Y) + 20
-			local minY, maxY = math.huge, -math.huge
-			for _, w in ipairs(wps) do
-				minY = math.min(minY, w.Position.Y)
-				maxY = math.max(maxY, w.Position.Y)
+		for attempt = 1, 4 do
+			local from = PlayerHumpart.Position
+			local wps, minY, maxY = computePath(from, dest)
+			if not wps then
+				print("[WALK] no usable path to " .. tostring(dest) .. ", moving straight")
+				return ZQ5.move(dest, WALK_SPEED, { wallMargin = 2.5, poll = poll })
 			end
-			if minY < lowEnd or maxY > highEnd then
-				print(string.format("[WALK] rejected path to %s: waypoint Y %.0f..%.0f outside %.0f..%.0f", tostring(dest), minY, maxY, lowEnd, highEnd))
-				wps = nil
-			elseif tick() - lastWalkLog > 3 then
+			if tick() - lastWalkLog > 3 then
 				lastWalkLog = tick()
-				print(string.format("[WALK] %d waypoints to %s, Y %.0f..%.0f", #wps, tostring(dest), minY, maxY))
+				print(string.format("[WALK] %d waypoints to %s, ground Y %.0f..%.0f", #wps, tostring(dest), minY, maxY))
 			end
-		end
 
-		if wps then
+			local lastGood = from
+			local failed = nil
+			ZQ5.walking = true
 			for i = 2, #wps do
 				local wp = (i == #wps) and dest or (wps[i].Position + Vector3.new(0, ROOT_ABOVE_GROUND, 0))
-				local _, reason = ZQ5.move(wp, WALK_SPEED, { poll = poll })
-				if reason then
+				local _, reason = ZQ5.move(wp, WALK_SPEED, { wallMargin = 1.5, poll = poll })
+				if reason == "stuck" or reason == "noclip" then
+					failed = reason
+					break
+				elseif reason then
+					ZQ5.walking = false
 					return false, reason
 				end
+				lastGood = wp
 			end
-			return true, nil
+			ZQ5.walking = false
+			if not failed then
+				return true, nil
+			end
+			print(string.format("[WALK] %s at %s, backing up to %s and re-pathing (try %d)", failed, tostring(PlayerHumpart.Position), tostring(lastGood), attempt))
+			ZQ5.move(lastGood, WALK_SPEED, {})
+			task.wait(0.3)
 		end
-
-		print("[WALK] no usable path to " .. tostring(dest) .. ", moving straight")
-		return ZQ5.move(dest, WALK_SPEED, { wallMargin = 2.5, poll = poll })
+		return false, "walkfail"
 	end
 
 	function tweenWithTeleport(pos, speed, offsetY, tweenconfigs)
@@ -4558,6 +4584,16 @@ elseif ids.Dungeon then
 
 							-- anticheat notifications: pause, recover, carry on from where we are
 							local acType = checkAnticheatNotifications()
+							-- while walking a path, a noclip flag means we left it: let walkTo back up
+							-- and re-path (the notice lingers ~2s, so ignore repeats for 3s)
+							if acType == "noclip" and ZQ5.walking then
+								if tick() < (ZQ5.acIgnoreUntil or 0) then
+									acType = nil
+								else
+									ZQ5.acIgnoreUntil = tick() + 3
+									return "noclip"
+								end
+							end
 							if acType then
 								st.paused = true
 								local cur = PlayerHumpart.Position
