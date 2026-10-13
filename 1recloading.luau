@@ -16,6 +16,15 @@ getgenv().Config = {
 	},
 }
 
+-- SINGLE INSTANCE: a second copy of this script (autoexec + manual run, etc.) fights the first one
+-- for the character -- two movers snapping it back and forth. Only the first copy runs.
+if getgenv().ZephyronRunning then
+	warn("[INSTANCE] another copy of this script is already running here - this copy exits")
+	return
+end
+getgenv().ZephyronRunning = true
+print("[INSTANCE] started (single instance guard)")
+
 if LPH_OBFUSCATED then
 	LRM_INIT_SCRIPT(function()
 		function isIdInList(id, ids)
