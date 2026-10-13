@@ -4327,15 +4327,21 @@ elseif ids.Dungeon then
 	ZQ5.straight = false
 	local stuckPos, stuckSince = nil, 0
 
+	-- where the stuck -> straight-line fallback is allowed: the Floor 1 maze and Floor 2
+	-- (the boss-gate lever sits in a lower room behind a doorway the navmesh does not connect)
 	local function inMaze()
 		local islands = workspace:FindFirstChild("Islands")
-		return islands
-			and islands:FindFirstChild("Impel Base - Floor 1")
-			and not islands:FindFirstChild("Impel Base - Floor 2")
+		if not islands then
+			return false
+		end
+		local f1 = islands:FindFirstChild("Impel Base - Floor 1")
+		local f2 = islands:FindFirstChild("Impel Base - Floor 2")
+		local f3 = islands:FindFirstChild("Impel Base - Floor 3")
+		return (f1 and not f2) or (f2 and not f3)
 	end
 
 	local function straightThrough(dest, poll, why)
-		print(string.format("[WALK] maze: stuck (%s) at %s, going straight to %s", why, tostring(PlayerHumpart.Position), tostring(dest)))
+		print(string.format("[WALK] stuck (%s) at %s, going straight to %s", why, tostring(PlayerHumpart.Position), tostring(dest)))
 		ZQ5.straight = true
 		local ok, reason = ZQ5.move(dest, WALK_SPEED, { poll = poll })
 		ZQ5.straight = false
