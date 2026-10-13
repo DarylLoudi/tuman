@@ -2900,7 +2900,11 @@ elseif ids.Dungeon then
 				if meshPart then
 					if Value:FindFirstChild("Lock") then
 						local ChestData = ChestInfo[meshPart.MeshId]
-						if ChestData and ChestData.Name == "Rare Chest" then
+						if
+							ChestData
+							and ChestData.Name == "Rare Chest"
+							and not (Others.SkipChests and Others.SkipChests[meshPart])
+						then
 							table.insert(RareChests, meshPart)
 						elseif ChestData and ChestData.Name ~= "Common Chest" then
 							Value:Destroy()
@@ -2941,6 +2945,7 @@ elseif ids.Dungeon then
 			end
 
 			if #RareChests == 0 and workspace.Islands:FindFirstChild("Impel Base - Floor 1") then
+				print("[CHEST] no rare chests left to open")
 				local currentHasWeapon = hasTargetWeapon()
 				local currentHasHaki = statsFolder.Stats.BusoMastery.Value ~= 0
 
@@ -2967,6 +2972,19 @@ elseif ids.Dungeon then
 					Others.LockedChest = HumPart
 				end
 			end
+			-- CHEST PHASE: a chest we cannot reach (no path) or open within 25s used to stay in the
+			-- list forever, so "no chests left, no weapon -> universe hub" never fired. Skip it.
+			Others.SkipChests = Others.SkipChests or setmetatable({}, { __mode = "k" })
+			Others.ChestSince = Others.ChestSince or setmetatable({}, { __mode = "k" })
+			if HumPart then
+				Others.ChestSince[HumPart] = Others.ChestSince[HumPart] or tick()
+				if tick() - Others.ChestSince[HumPart] > 25 then
+					print("[CHEST] could not open a chest in 25s, skipping it")
+					Others.SkipChests[HumPart] = true
+					Others.LockedChest = nil
+					HumPart = nil
+				end
+			end
 			if HumPart then
 				eatFunction()
 				task.wait(0.1)
@@ -2976,8 +2994,14 @@ elseif ids.Dungeon then
 				if (HumPart.Position - PlayerHumpart.Position).Magnitude > 5 then
 					targetPosition = HumPart.Position + Vector3.new(0, 3, 0)
 					task.wait(0.1)
+					ZQ5.lastWalkResult = nil
 					tweenWithTeleport(CFrame.new(targetPosition), Speed, selected_Offset)
 					CanTween = true
+					if ZQ5.lastWalkResult == "nopath" then
+						print("[CHEST] no path to a chest, skipping it")
+						Others.SkipChests[HumPart] = true
+						Others.LockedChest = nil
+					end
 				end
 
 				if (HumPart.Position - PlayerHumpart.Position).Magnitude <= 10 then
@@ -4389,7 +4413,7 @@ elseif ids.Dungeon then
 		-- the floor) or climbing far above them (onto wall tops) is rejected
 		local fromG = groundYAt(from, 60) or (from.Y - ROOT_ABOVE_GROUND)
 		local destG = groundYAt(dest, 60) or (dest.Y - ROOT_ABOVE_GROUND)
-		local lowEnd, highEnd = math.min(fromG, destG) - 6, math.max(fromG, destG) + 20
+		local lowEnd, highEnd = math.min(fromG, destG) - 15, math.max(fromG, destG) + 25
 		local minY, maxY = math.huge, -math.huge
 		for _, w in ipairs(wps) do
 			minY = math.min(minY, w.Position.Y)
@@ -4450,6 +4474,7 @@ elseif ids.Dungeon then
 			return straightThrough(dest, poll, "no progress")
 		end
 
+		ZQ5.lastWalkResult = nil
 		for attempt = 1, 4 do
 			local from = PlayerHumpart.Position
 			local wps, minY, maxY, nearOnly = computePath(from, dest)
@@ -4459,6 +4484,7 @@ elseif ids.Dungeon then
 				end
 				-- outside the maze: no straight-line fallback (it set off tp/noclip checks)
 				print("[WALK] no path to " .. tostring(dest) .. ", skipping this move")
+				ZQ5.lastWalkResult = "nopath"
 				task.wait(1)
 				return false, "nopath"
 			end
