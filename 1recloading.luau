@@ -1805,10 +1805,10 @@ elseif ids.Dungeon then
 
 	local COLLIDE_PARTS = { HumanoidRootPart = true, Head = true, Torso = true, UpperTorso = true, LowerTorso = true }
 
-	-- NOCLIP IS OFF. Set NOCLIP_ENABLED = true to bring the old behaviour (collisions off while
-	-- travelling/hovering) back. With it off, every noClip(true) call just makes sure our own
-	-- body parts collide normally.
-	local NOCLIP_ENABLED = false
+	-- NOCLIP: on only while travelling/hovering, collisions back on when idle. Turning it fully
+	-- off (false) made moves collide with Floor 1's trees: the key sits by a tree, the move got
+	-- stuck, and every stuck hop pad-rose 40 studs, climbing to Y 2380 and earning flight strikes.
+	local NOCLIP_ENABLED = true
 	function noClip(Value)
 		if noClipConnection then
 			noClipConnection:Disconnect()
@@ -4528,22 +4528,11 @@ elseif ids.Dungeon then
 							-- SpeedBypass can change mid-move: just pick the new speed up
 							st.speed = effSpeed()
 
-							-- stuck against a wall: hop over it at the safe height (old behaviour)
+							-- stuck against a wall: give up this phase. No hop: hopping up (first an
+							-- instant CFrame to 2600, then a 40-stud pad rise) is what kept climbing.
 							if st.stuckT >= 1 then
 								st.stuckT = 0
-								hops = hops + 1
-								if hops >= 2 then
-									return "stuck"
-								end
-								local cur = PlayerHumpart.Position
-								local yOffset = offsetY or selected_Offset or (cur.Y + 200)
-								st.paused = true
-								-- was a CFrame write straight up to yOffset (the safe height, up to 2600).
-								-- Ride the boss-farm pad up a wall's height instead, then carry on.
-								pcall(PadRise, 40)
-								task.wait(0.3)
-								st.dest = targetCF.Position
-								st.paused = false
+								return "stuck"
 							end
 							return nil
 						end,
@@ -6181,9 +6170,8 @@ elseif ids.Dungeon then
 								local targetPosition = keyPosition + (keyPart.CFrame.RightVector * 5)
 								local distance = (targetPosition - PlayerHumpart.Position).Magnitude
 
-								if distance > 5 then
-									tweenWithTeleport(CFrame.new(targetPosition), 40)
-								elseif distance > 3 then
+								-- straight glide to the key (it sits against a tree, so no wall check)
+								if distance > 3 then
 									ZQ5.move(targetPosition, 40, {})
 								end
 
