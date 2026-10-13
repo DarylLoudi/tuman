@@ -3094,20 +3094,12 @@ elseif ids.Dungeon then
 				local currentHasWeapon = hasTargetWeapon()
 				local currentHasHaki = statsFolder.Stats.BusoMastery.Value ~= 0
 
-				-- chests we could not walk to while the first barrier still stands are behind it
-				-- (the old script flew over at Y 2600; walking can't). Clear the barrier first and
-				-- come back for them, instead of giving up on this run.
-				local skipped = 0
-				for part in pairs(Others.SkipChests or {}) do
-					if part.Parent and part.Parent.Parent and part.Parent:FindFirstChild("Lock") then
-						skipped = skipped + 1
-					end
-				end
-				local fl1 = workspace.Islands:FindFirstChild("Impel Base - Floor 1")
-				local barrierUp = fl1 and fl1:FindFirstChild("Barriers") and fl1.Barriers:FindFirstChild("FirstBarrier")
-				if (not currentHasWeapon or not currentHasHaki) and skipped > 0 and barrierUp and not Others.ChestRetryDone then
-					print(string.format("[CHEST] %d rare chests out of reach, clearing the barrier first and coming back", skipped))
-					Others.ChestsBehindBarrier = true
+				-- no wanted weapon from the reachable rare chests (but haki): don't hop servers,
+				-- do this whole run with melee (Strength gets the points, see the stat loop) and
+				-- don't come back for chests
+				if not currentHasWeapon and currentHasHaki then
+					print("[CHEST] no wanted weapon from the reachable chests - melee for the rest of this run")
+					Others.MeleeRun = true
 					return
 				end
 
@@ -3865,6 +3857,15 @@ elseif ids.Dungeon then
 						game:GetService("ReplicatedStorage").Events.stats:FireServer("SwordMastery", nil, available)
 					elseif OwnedFarmedWeapons["Vrael's Pipe"] then
 						game:GetService("ReplicatedStorage").Events.stats:FireServer("Strength", nil, available)
+					elseif Others.MeleeRun then
+						-- melee run (no wanted weapon): Strength, up to 1150
+						local strength = statsFolder.Stats.Strength.Value
+						local pts = math.min(1150 - strength, available)
+						if pts > 0 then
+							player.PlayerGui.Statistics.Main.TopOptions.Base.Input.Text = tostring(pts)
+							task.wait(0.2)
+							game:GetService("ReplicatedStorage").Events.stats:FireServer("Strength", nil, pts)
+						end
 					end
 				end
 			end
@@ -7017,12 +7018,12 @@ elseif ids.Dungeon then
 
 						-- chests until we have haki AND a weapon (was: haki only -- with haki but no
 						-- weapon it went straight to the hub without opening a single chest)
-						if (not hashaki or not hasRequiredWeapon) and not Others.ChestsBehindBarrier then
+						if (not hashaki or not hasRequiredWeapon) and not Others.MeleeRun then
 							hakiFarm()
 							return
 						end
 
-						if not hasRequiredWeapon and not Others.ChestsBehindBarrier then
+						if not hasRequiredWeapon and not Others.MeleeRun then
 							task.wait(2)
 							game:GetService("TeleportService")
 								:Teleport(6360478118, game:GetService("Players").LocalPlayer)
@@ -7130,18 +7131,6 @@ elseif ids.Dungeon then
 								CanTween = true
 							end
 						end
-					elseif
-						workspace.Islands:FindFirstChild("Impel Base - Floor 1")
-						and Others.ChestsBehindBarrier
-						and not Character:FindFirstChild("Cuffed")
-					then
-						-- barrier down: the rare chests that were out of reach behind it
-						print("[CHEST] barrier is down, going back for the rare chests behind it")
-						Others.ChestsBehindBarrier = false
-						Others.ChestRetryDone = true
-						Others.SkipChests = {}
-						Others.ChestSince = {}
-						hakiFarm()
 					elseif workspace.Islands:FindFirstChild("Impel Base - Floor 1") then
 						MazeNpcKill()
 					end
