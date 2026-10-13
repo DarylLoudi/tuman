@@ -4635,13 +4635,13 @@ elseif ids.Dungeon then
 		return Vector3.new(pos.X, pos.Y + ROOT_ABOVE_GROUND, pos.Z)
 	end
 
-	local function computePathExact(from, dest)
+	local function computePathExact(from, dest, radius)
 		local ok, path = pcall(function()
 			local p = PathfindingService:CreatePath({
-				AgentRadius = 2.5,
+				AgentRadius = radius or 2.5,
 				AgentHeight = 6,
 				AgentCanJump = true,
-				WaypointSpacing = 6,
+				WaypointSpacing = 4,
 			})
 			p:ComputeAsync(from, dest)
 			return p
@@ -4673,7 +4673,14 @@ elseif ids.Dungeon then
 		Vector3.new(5, 0, 0), Vector3.new(-5, 0, 0), Vector3.new(0, 0, 5), Vector3.new(0, 0, -5),
 		Vector3.new(4, 0, 4), Vector3.new(-4, 0, 4), Vector3.new(4, 0, -4), Vector3.new(-4, 0, -4) }
 	local function computePath(from, dest)
-		local wps, minY, maxY = computePathExact(from, dest)
+		-- a wide agent first: paths hugging walls / cutting corners put our head in the wall
+		-- for the server (noclip strikes; enough of them and the game kills you, "eliminated
+		-- by Game"). Narrow agent only when the wide one finds nothing.
+		local wps, minY, maxY = computePathExact(from, dest, 4)
+		if wps then
+			return wps, minY, maxY, false
+		end
+		wps, minY, maxY = computePathExact(from, dest)
 		if wps then
 			return wps, minY, maxY, false
 		end
