@@ -1961,6 +1961,48 @@ elseif ids.Dungeon then
 		return nil
 	end
 
+	-- DIAGNOSTICS (remove once the post-Vera teleport is understood): log every anticheat
+	-- hit and every sudden jump with what the script was targeting at the time.
+	do
+		local function ctx()
+			local isl = {}
+			for _, i in ipairs(workspace.Islands:GetChildren()) do
+				isl[#isl + 1] = i.Name
+			end
+			return string.format(
+				"Npc=%s targetPosition=%s targetFloorPosition=%s step=%s islands=[%s]",
+				tostring(Npc and Npc.Name),
+				tostring(targetPosition),
+				tostring(targetFloorPosition),
+				tostring(StepCounter),
+				table.concat(isl, ", ")
+			)
+		end
+		local rawAC = checkAnticheatNotifications
+		local lastACLog = 0
+		function checkAnticheatNotifications()
+			local r = rawAC()
+			if r and tick() - lastACLog > 2 then
+				lastACLog = tick()
+				print("[AC] " .. tostring(r) .. " at " .. tostring(PlayerHumpart and PlayerHumpart.Position) .. " | " .. ctx())
+			end
+			return r
+		end
+		local lastPos
+		Services.RunService.Heartbeat:Connect(function()
+			local h = PlayerHumpart
+			if not h or not h.Parent then
+				lastPos = nil
+				return
+			end
+			local cur = h.Position
+			if lastPos and (cur - lastPos).Magnitude > 80 then
+				print(string.format("[JUMP] %s -> %s | %s", tostring(lastPos), tostring(cur), ctx()))
+			end
+			lastPos = cur
+		end)
+	end
+
 	local LastInstantTP = 0
 	local INSTANT_TP_COOLDOWN = 3
 	local INSTANT_TP_LONG_DISTANCE = 1200
