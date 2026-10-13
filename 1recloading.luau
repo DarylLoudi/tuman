@@ -2611,6 +2611,9 @@ elseif ids.Dungeon then
 
 		while attempts < maxAttempts do
 			attempts = attempts + 1
+			if Character:FindFirstChild("Cuffed") then
+				return false -- handcuffed: the key step comes first
+			end
 
 			Backpack = game.Players.LocalPlayer.Backpack
 
@@ -2625,6 +2628,10 @@ elseif ids.Dungeon then
 			}
 
 			for _, v in pairs(workspace.Effects:GetChildren()) do
+				-- never delete the handcuff Key: cuffs that arrive late found it gone -> stuck cuffed
+				if v.Name == "Key" then
+					continue
+				end
 				if not keepItems[v.Name] and not v:FindFirstChild("Lock") then
 					v:Destroy()
 				elseif keepItems[v.Name] then
@@ -3121,6 +3128,10 @@ elseif ids.Dungeon then
 			}
 
 			for _, v in pairs(workspace.Effects:GetChildren()) do
+				-- never delete the handcuff Key: cuffs that arrive late found it gone -> stuck cuffed
+				if v.Name == "Key" then
+					continue
+				end
 				if not keepItems[v.Name] and not v:FindFirstChild("Lock") then
 					v:Destroy()
 				elseif keepItems[v.Name] then
@@ -6798,11 +6809,27 @@ elseif ids.Dungeon then
 
 					-- the cuffs can arrive a moment after we land on Floor 1; going to the chests
 					-- before they show up skipped the key step
+					-- (cuffs were seen arriving 10s after landing: 6s was too short, the chests
+					-- started and their cleanup deleted the Key)
 					if not Character:FindFirstChild("Cuffed") then
 						ZQ5.floor1Since = ZQ5.floor1Since or tick()
-						if tick() - ZQ5.floor1Since < 6 then
+						if tick() - ZQ5.floor1Since < 20 then
 							return
 						end
+					end
+
+					-- cuffed but no key anywhere for 30s (gone / never spawned): this run is dead,
+					-- go back to the universe hub and start over
+					if Character:FindFirstChild("Cuffed") and not workspace.Effects:FindFirstChild("Key") then
+						ZQ5.noKeySince = ZQ5.noKeySince or tick()
+						if tick() - ZQ5.noKeySince > 30 then
+							print("[KEY] cuffed with no key for 30s, back to the universe hub")
+							ZQ5.noKeySince = nil
+							game:GetService("TeleportService"):Teleport(6360478118, game:GetService("Players").LocalPlayer)
+							return
+						end
+					else
+						ZQ5.noKeySince = nil
 					end
 
 					if Character:FindFirstChild("Cuffed") then
