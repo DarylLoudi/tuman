@@ -4404,7 +4404,12 @@ elseif ids.Dungeon then
 				return
 			end
 			local hum2 = Character and Character:FindFirstChildOfClass("Humanoid")
-			if drift > 3 then
+			local d = h.Position - st.lastSet
+			local sideways = Vector3.new(d.X, 0, d.Z).Magnitude
+			if drift > 3 and sideways > 2 and d.Y > -sideways then
+				-- (only a SIDEWAYS shove counts as a hit. A mostly-downward jump is gravity during
+				-- a long frame -- low FPS in a background window -- and must be held, or we
+				-- "carried on" from lower and lower spots and sank through the floor.)
 				-- knocked (an NPC hit): never snap back to the line. The snap is a teleport for
 				-- the server (tp check -> a 4s pause, "Y+ too fast" when it is upward), and every
 				-- hit in the maze meant stop... go... stop. End the move; walkTo re-paths from
@@ -4655,8 +4660,13 @@ elseif ids.Dungeon then
 		-- still up in the air (a hover just ended and its pad is gone): come straight down to
 		-- standing height first, pathfinding from mid-air fails and the body just dropped
 		do
+			-- only when we're really in the air: the humanoid stands on nothing and the drop is a
+			-- hover's worth. On the Floor 2 spawn the ray went through the (non-collide) spawn
+			-- platform, found ground ~80 studs lower and walked us straight down through the floor.
 			local p0 = PlayerHumpart.Position
-			local g0 = groundYAt(p0, 80)
+			local hum0 = Character and Character:FindFirstChildOfClass("Humanoid")
+			local standing = hum0 and hum0.FloorMaterial ~= Enum.Material.Air
+			local g0 = (not standing) and groundYAt(p0, 30) or nil
 			if g0 and p0.Y - (g0 + standHeight()) > 3 then
 				ZQ5.move(Vector3.new(p0.X, g0 + standHeight(), p0.Z), WALK_SPEED, { poll = poll })
 			end
@@ -5844,8 +5854,12 @@ elseif ids.Dungeon then
 				-- slowly afterwards.
 				local myHum = Character and Character:FindFirstChildOfClass("Humanoid")
 				local knocked = false -- (no ragdoll handling: the old build only deleted Ragdoll_Client)
-				local below = standAt.Y - hrp.Position.Y
-				if knocked or below > 1.5 or (hrp.Position - standAt).Magnitude > 6 then
+				-- only a SIDEWAYS shove is a hit. A drop straight down is gravity in a long frame
+				-- (low FPS, background window): re-seating the pad there let us sink frame by
+				-- frame into the floor. Just pin back.
+				local off = hrp.Position - standAt
+				local sideways = Vector3.new(off.X, 0, off.Z).Magnitude
+				if knocked or (sideways > 2 and off.Magnitude > 3) then
 					pad.Position = hrp.Position - Vector3.new(0, HOVER_PAD_STAND, 0)
 					ZQ5.lastPin = hrp.Position
 					ZQ5.hitAt = tick()
