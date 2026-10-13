@@ -2187,7 +2187,7 @@ elseif ids.Dungeon then
 	end
 
 	-- RECOVER AFTER A HIT: a hit can leave the humanoid in Physics / Ragdoll / FallingDown (we
-	-- delete the game's Ragdoll_Client, which normally gets us up). With no move or hover holding
+	-- used to delete the game's Ragdoll_Client, which normally gets us up). With no move or hover holding
 	-- the body it then sank slowly into the floor. Stand back up.
 	task.spawn(function()
 		local downSince = nil
@@ -2224,7 +2224,8 @@ elseif ids.Dungeon then
 		end
 	end)
 
-	-- UN-RAGDOLL: the game's Ragdoll_Client (deleted above) is what normally puts us back
+	-- UN-RAGDOLL (fallback): the game's Ragdoll_Client is kept now and normally puts us back
+	-- together itself; this only steps in if we are still limp after 4s. It used to be deleted:
 	-- together after a ragdoll hit. Without it the body stayed limp forever (joints off,
 	-- isRagdolled stuck) and no move or hover could carry it. Rebuild after 1.5s.
 	task.spawn(function()
@@ -2250,7 +2251,7 @@ elseif ids.Dungeon then
 					return
 				end
 				since = since or tick()
-				if tick() - since < 1.5 then
+				if tick() - since < 4 then
 					return
 				end
 				since = nil
@@ -2268,7 +2269,7 @@ elseif ids.Dungeon then
 					hum.PlatformStand = false
 					hum:ChangeState(Enum.HumanoidStateType.GettingUp)
 				end
-				print("[RECOVER] ragdolled for 1.5s - put the joints back together")
+				print("[RECOVER] still ragdolled after 4s - put the joints back together")
 			end)
 		end
 	end)
@@ -6154,9 +6155,7 @@ elseif ids.Dungeon then
 					bv.Velocity = Vector3.new(0, 0, 0)
 					bv.Parent = PlayerHumpart
 				end
-				if player.PlayerScripts.Ragdolls:FindFirstChild("Ragdoll_Client") then
-					player.PlayerScripts.Ragdolls.Ragdoll_Client:Destroy()
-				end
+				-- (Ragdoll_Client is no longer deleted: it is what stands us back up after a ragdoll hit)
 			end)
 		end
 	end)
