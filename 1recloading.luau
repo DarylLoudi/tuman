@@ -4490,7 +4490,9 @@ elseif ids.Dungeon then
 			ZQ5.walking = true
 			for i = 2, #wps do
 				local wp = (i == #wps and not nearOnly) and dest or (wps[i].Position + Vector3.new(0, ROOT_ABOVE_GROUND, 0))
-				local _, reason = ZQ5.move(wp, WALK_SPEED, { wallMargin = 1.5, poll = poll })
+				-- no wall check: it pushed us off along the hit surface's normal (a floor or
+				-- step under the line -> straight up). The pathfinding route is the wall check.
+				local _, reason = ZQ5.move(wp, WALK_SPEED, { poll = poll })
 				ZQ5.lastWalkCall = tick()
 				if reason == "stuck" or reason == "noclip" then
 					failed = reason
