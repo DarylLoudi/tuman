@@ -2337,6 +2337,9 @@ elseif ids.Dungeon then
 		if not mhrp or not root then
 			return false
 		end
+		if ZQ5 and ZQ5.noHoverMob == npc and tick() < (ZQ5.noHoverUntil or 0) then
+			return false -- the hover got stuck on a wall going to it a moment ago
+		end
 		local d = mhrp.Position - root.Position
 		if math.abs(d.Y) > 25 or Vector3.new(d.X, 0, d.Z).Magnitude > 45 then
 			return false
@@ -2377,7 +2380,9 @@ elseif ids.Dungeon then
 				and not NutcrackerAnims
 			then
 				local m1Distance = 10
-				local alreadyOnIt = ZQ5 and ZQ5.hoverActive and ZQ5.enemy == Npc
+				-- keep the long hover range only while the mob stays in sight: once it runs behind a
+				-- wall the lease runs out, the pad lands and the walker paths around instead
+				local alreadyOnIt = ZQ5 and ZQ5.hoverActive and ZQ5.enemy == Npc and mobInReach(Npc)
 				local isVera = string.find(Npc.Name, "Vera", 1, true) ~= nil
 				if isVera then
 					-- quest5 style: let the hover engine fly to and follow Vera instead of
@@ -4290,14 +4295,14 @@ elseif ids.Dungeon then
 		-- ctl.route: a list of points followed in ONE move (no stop, no humanoid state reset
 		-- between them). Per-point moves toggled PlatformStand / GettingUp at every waypoint:
 		-- the humanoid stood up for a frame and pushed the root up/down -> visible bobbing.
-		local route = ctl.route
 		local st = {
 			finished = false,
 			reason = nil,
 			lastSet = nil,
 			stuckT = 0,
 			speed = speed or 80,
-			dest = route and route[1] or destination,
+			dest = ctl.route and ctl.route[1] or destination,
+			route = ctl.route,
 			idx = 1,
 			paused = false,
 		}
@@ -4328,6 +4333,7 @@ elseif ids.Dungeon then
 
 			local pos = h.Position
 			local rot = h.CFrame - h.CFrame.Position
+			local route = st.route
 			local budget = st.speed * dt
 			local toTarget = st.dest - pos
 			local dist = toTarget.Magnitude
@@ -4943,6 +4949,7 @@ elseif ids.Dungeon then
 										targetCF = newTargetCF
 										downPos = CFrame.new(newPos)
 										st.dest = newTargetCF.Position
+										st.route = nil -- new target: stop following the old path
 									end
 								end
 							end
@@ -5297,7 +5304,9 @@ elseif ids.Dungeon then
 			local origin = isValidMob(primary) and primary.HumanoidRootPart.Position or PlayerHumpart.Position
 			local best, bestDist = nil, math.huge
 			for _, npc in ipairs(folder:GetChildren()) do
-				if isValidMob(npc) and not inAggro(npc) and not (skipUntil[npc] and tick() < skipUntil[npc]) then
+				-- only mobs near and in plain sight: the pad flies a straight line, and touring
+				-- to a mob 150 studs away went straight through walls and floors
+				if isValidMob(npc) and not inAggro(npc) and not (skipUntil[npc] and tick() < skipUntil[npc]) and mobInReach(npc) then
 					local r = npc.HumanoidRootPart
 					if (r.Position - origin).Magnitude <= AGGRO_RADIUS then
 						local d = (r.Position - PlayerHumpart.Position).Magnitude
@@ -5732,7 +5741,37 @@ elseif ids.Dungeon then
 				local goal = targetPos - Vector3.new(0, HOVER_PAD_STAND, 0)
 				local toGoal = goal - pad.Position
 				if toGoal.Magnitude > 0.05 then
-					pad.Position = pad.Position + toGoal.Unit * math.min(HOVER_PAD_SPEED * (dt or 1 / 60), toGoal.Magnitude)
+					local step = toGoal.Unit * math.min(HOVER_PAD_SPEED * (dt or 1 / 60), toGoal.Magnitude)
+					-- never carry the body through a wall / floor (noclip + tp flags): if the body or
+					-- head line of this step hits geometry, hold here this frame
+					local rp = RaycastParams.new()
+					rp.FilterType = Enum.RaycastFilterType.Exclude
+					rp.FilterDescendantsInstances = {
+						pad,
+						Character,
+						workspace:FindFirstChild("NPCs"),
+						workspace:FindFirstChild("Effects"),
+						workspace:FindFirstChild("PlayerCharacters"),
+					}
+					pcall(function()
+						rp.RespectCanCollide = true
+					end)
+					local from = pad.Position + Vector3.new(0, HOVER_PAD_STAND, 0)
+					local probe = step + step.Unit * 1.5
+					local blocked = workspace:Raycast(from, probe, rp)
+						or workspace:Raycast(from + Vector3.new(0, 1.5, 0), probe, rp)
+					if not blocked then
+						pad.Position = pad.Position + step
+						ZQ5.padBlockedSince = nil
+					else
+						-- held against geometry too long: let the walker path to this mob instead
+						ZQ5.padBlockedSince = ZQ5.padBlockedSince or tick()
+						if tick() - ZQ5.padBlockedSince > 1.5 then
+							ZQ5.padBlockedSince = nil
+							ZQ5.noHoverMob, ZQ5.noHoverUntil = mob, tick() + 6
+							print("[HOVER] path to " .. mob.Name .. " blocked, walking to it instead")
+						end
+					end
 				end
 				standAt = pad.Position + Vector3.new(0, HOVER_PAD_STAND, 0)
 
