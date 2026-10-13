@@ -4321,7 +4321,9 @@ elseif ids.Dungeon then
 				local y = offsetY or targetCFrame.Position.Y
 				local isBlocking = Character:FindFirstChild("Blocking")
 
-				local actuallyNeedsOffset = offsetY ~= nil
+				-- set to false to bring back the old "fly up to offsetY, cross, come down" phases
+				local DISABLE_UP_PHASE = true
+				local actuallyNeedsOffset = offsetY ~= nil and not DISABLE_UP_PHASE
 
 				if
 					actuallyNeedsOffset
