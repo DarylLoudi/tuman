@@ -2120,7 +2120,7 @@ elseif ids.Dungeon then
 		end
 
 		-- ride a pad up dy studs, hold `hold` seconds, ride it back down, remove it
-		function PadDodge(dy, hold)
+		function PadDodge(dy, hold) -- (rides at 25 studs/s, as before; the rescue rise is slower)
 			local h = PlayerHumpart
 			if busy or not h or not h.Parent then
 				return
@@ -2136,7 +2136,7 @@ elseif ids.Dungeon then
 			pad.Position = h.Position - Vector3.new(0, PAD_STAND, 0)
 			pad.Parent = workspace
 			local function ride(goalY)
-				local deadline = os.clock() + math.abs(goalY - pad.Position.Y) / PAD_SPEED + 3
+				local deadline = os.clock() + math.abs(goalY - pad.Position.Y) / 25 + 3
 				while math.abs(pad.Position.Y - goalY) > 0.05 and os.clock() < deadline do
 					local dt = Services.RunService.Heartbeat:Wait()
 					h = PlayerHumpart
@@ -2147,7 +2147,7 @@ elseif ids.Dungeon then
 						return
 					end
 					local d = goalY - pad.Position.Y
-					pad.Position = pad.Position + Vector3.new(0, math.sign(d) * math.min(PAD_SPEED * dt, math.abs(d)), 0)
+					pad.Position = pad.Position + Vector3.new(0, math.sign(d) * math.min(25 * dt, math.abs(d)), 0)
 					h.CFrame = CFrame.new(pad.Position + Vector3.new(0, PAD_STAND, 0)) * (h.CFrame - h.CFrame.Position)
 				end
 			end
@@ -2366,8 +2366,7 @@ elseif ids.Dungeon then
 				-- horizontal only, so a mob on a ledge 90 studs overhead made the pad fly straight up
 				-- into the ceiling. Walk there instead (the path takes the stairs / ramps).
 				local dY = math.abs(Npc.HumanoidRootPart.Position.Y - PlayerHumpart.Position.Y)
-				local dodging = ZQ5 and ZQ5.dodgeMob == Npc and tick() < (ZQ5.dodgeUntil or 0)
-				if dY > 30 and not dodging and not isVera then
+				if dY > 30 and not isVera then
 					m1Distance = 0
 				end
 
@@ -2382,7 +2381,7 @@ elseif ids.Dungeon then
 							offset = Vector3.new(0, 9, 0)
 							safeYoffset = 20
 						elseif Npc:GetAttribute("RealName") == "Elo The Bunny" then
-							offset = Vector3.new(0, 10, 3) -- hover 10 studs above Elo
+							offset = Vector3.new(0, 10, 6)
 							safeYoffset = 20
 						elseif
 							weaponStyle
@@ -3425,7 +3424,9 @@ elseif ids.Dungeon then
 			elseif Npc:FindFirstChild("RaiuiSword") then
 				return Npc.HumanoidRootPart.Position + Vector3.new(0, 0, 20)
 			elseif Npc:GetAttribute("RealName") == "Elo The Bunny" then
-				return Npc.HumanoidRootPart.Position - (Npc.HumanoidRootPart.CFrame.LookVector * 10)
+				return Npc.HumanoidRootPart.Position
+					- (Npc.HumanoidRootPart.CFrame.LookVector * 10)
+					+ Vector3.new(0, 15, 5)
 			elseif targetFloorPosition then
 				return targetFloorPosition + Vector3.new(0, 45, 0)
 			else
@@ -3527,15 +3528,6 @@ elseif ids.Dungeon then
 					local animationIdToCheck2 = 15246831598
 					local animationIdToCheck3 = 6647575254
 					for _, track in ipairs(playingAnimationTracks) do
-						-- log each Elo animation once, so a changed slam id shows up in the console
-						if Npc:GetAttribute("RealName") == "Elo The Bunny" then
-							EloSeenAnims = EloSeenAnims or {}
-							local aid = track.Animation.AnimationId
-							if not EloSeenAnims[aid] then
-								EloSeenAnims[aid] = true
-								print("[ELO] anim " .. aid .. " (" .. tostring(track.Name) .. ")")
-							end
-						end
 						if track.Animation.AnimationId == "rbxassetid://" .. animationIdToCheck then
 							NutcrackerAnims = true
 							Checker = true
@@ -3543,16 +3535,16 @@ elseif ids.Dungeon then
 							BlugoriAnims = false
 							Checker = true
 						elseif track.Animation.AnimationId == "rbxassetid://" .. animationIdToCheck3 then
-							-- Elo's slam: the hover rises straight up out of it (see ELO_DODGE_*)
+							EloAnims = true
 							Checker = true
-							if ZQ5 then
-								if tick() > (ZQ5.dodgeUntil or 0) then
-									ZQ5.dodgeStart = tick()
-									print("[ELO] slam, dodging up")
-								end
-								ZQ5.dodgeMob = Npc
-								ZQ5.dodgeUntil = math.max(tick() + 0.5, ZQ5.dodgeStart + 1.8)
-							end
+							local oldYpos = PlayerHumpart.Position.Y
+							local targetY = oldYpos + 60
+							Facemouse()
+							task.wait(0.3)
+							-- was two instant CFrame writes (up 60, then back). Ride a pad up and down
+							-- instead: standing on a pad reads as grounded, so no flight strikes.
+							pcall(PadDodge, targetY - oldYpos, 1.5)
+							EloAnims = false
 						end
 					end
 					if not Checker then
@@ -5737,7 +5729,6 @@ elseif ids.Dungeon then
 		-- hover pushed up at 15-40 studs/s and still sat at ground height on tutorial Vera.
 		local HOVER_PAD_SPEED, HOVER_PAD_STAND = 30, 4
 		local HOVER_CLIMB_SPEED = 14 -- max studs/s up
-		local ELO_DODGE_HEIGHT, ELO_DODGE_SPEED = 40, 35 -- studs above Elo, climb speed
 		local function hoverPadStop()
 			if ZQ5.hoverPad and ZQ5.hoverPad.Parent then
 				ZQ5.hoverPad:Destroy()
@@ -5871,19 +5862,12 @@ elseif ids.Dungeon then
 				local targetPos = hoverPointFor(mob) + lead
 				local padSpeed = HOVER_PAD_SPEED
 
-				-- ELO'S SLAM: rise straight up above Elo out of the slam, then come back down
-				local dodging = ZQ5.dodgeMob == mob and tick() < (ZQ5.dodgeUntil or 0)
-				if dodging then
-					targetPos = Vector3.new(mhrp.Position.X, mhrp.Position.Y + ELO_DODGE_HEIGHT, mhrp.Position.Z)
-					padSpeed = ELO_DODGE_SPEED
-				end
-
 				local goal = targetPos - Vector3.new(0, HOVER_PAD_STAND, 0)
 				local toGoal = goal - pad.Position
 				if toGoal.Magnitude > 0.05 then
 					local step = toGoal.Unit * math.min(padSpeed * (dt or 1 / 60), toGoal.Magnitude)
 					-- climb slowly (fast rises earn "Y+ too fast"), slower still right after a hit
-					local maxUp = (dodging and ELO_DODGE_SPEED or (tick() - (ZQ5.hitAt or 0) < 2 and 6 or HOVER_CLIMB_SPEED))
+					local maxUp = (tick() - (ZQ5.hitAt or 0) < 2 and 6 or HOVER_CLIMB_SPEED)
 						* (dt or 1 / 60)
 					if step.Y > maxUp then
 						step = Vector3.new(step.X, maxUp, step.Z)
