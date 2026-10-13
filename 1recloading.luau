@@ -4306,7 +4306,10 @@ elseif ids.Dungeon then
 		local id = "ZephyronMove_" .. tostring(math.random(1, 1e9))
 		ZQ5.moving = true
 
-		RunSvc:BindToRenderStep(id .. "_move", Enum.RenderPriority.Camera.Value - 1, function(dt)
+		-- stepped on Heartbeat, not RenderStepped: a minimized / background Roblox window stops
+		-- rendering, the walk froze ("no progress for 3s") and nothing held the body up -> it sank
+		-- into the floor (noclip). Heartbeat keeps running with the window in the background.
+		local moveConn = RunSvc.Heartbeat:Connect(function(dt)
 			local h = PlayerHumpart
 			if not h or not h.Parent then
 				st.finished = true
@@ -4454,7 +4457,7 @@ elseif ids.Dungeon then
 			end
 		end)
 
-		RunSvc:UnbindFromRenderStep(id .. "_move")
+		moveConn:Disconnect()
 		RunSvc:UnbindFromRenderStep(id .. "_cam")
 		driftConn:Disconnect()
 		ZQ5.moving = false
