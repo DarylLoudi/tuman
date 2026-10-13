@@ -2520,6 +2520,20 @@ elseif ids.Dungeon then
 		["Knight's Gauntlet"] = true,
 	}
 	local OwnedFarmedWeapons = {}
+	-- which wanted weapon a drop / tool name is, tolerant of variants ("Kraken Blade (Gold)",
+	-- "Knights Gauntlet", different case / apostrophe)
+	local function normName(n)
+		return string.lower((tostring(n):gsub("[^%w]", "")))
+	end
+	function wantedWeaponName(name)
+		local n = normName(name)
+		for weaponName, on in pairs(WeaponsToFarm) do
+			if on and string.find(n, normName(weaponName), 1, true) then
+				return weaponName
+			end
+		end
+		return nil
+	end
 	function eatFunction()
 		if LocalPlayer.Backpack:FindFirstChild("Spirit Essence") then
 			local Tool = LocalPlayer.Backpack["Spirit Essence"]
@@ -2605,8 +2619,8 @@ elseif ids.Dungeon then
 
 			for _, v in pairs(workspace.Effects:GetChildren()) do
 				-- never delete the handcuff Key: cuffs that arrive late found it gone -> stuck cuffed
-				if v.Name == "Key" then
-					continue
+				if v.Name == "Key" or wantedWeaponName(v.Name) then
+					continue -- the handcuff key and wanted weapon drops are never deleted
 				end
 				if not keepItems[v.Name] and not v:FindFirstChild("Lock") then
 					v:Destroy()
@@ -2756,12 +2770,7 @@ elseif ids.Dungeon then
 		for weaponName, _ in pairs(WeaponsToFarm) do
 			for _, tool in pairs(LocalPlayer.Backpack:GetChildren()) do
 				if tool:IsA("Tool") then
-					if weaponName == "Kraken Blade" then
-						if string.find(tool.Name, "Kraken Blade") then
-							OwnedFarmedWeapons[weaponName] = true
-							break
-						end
-					elseif tool.Name == weaponName or tool.Name:find(weaponName) then
+					if wantedWeaponName(tool.Name) == weaponName then
 						OwnedFarmedWeapons[weaponName] = true
 						break
 					end
@@ -2771,12 +2780,7 @@ elseif ids.Dungeon then
 			if not OwnedFarmedWeapons[weaponName] and Character then
 				for _, tool in pairs(Character:GetChildren()) do
 					if tool:IsA("Tool") then
-						if weaponName == "Kraken Blade" then
-							if string.find(tool.Name, "Kraken Blade") then
-								OwnedFarmedWeapons[weaponName] = true
-								break
-							end
-						elseif tool.Name == weaponName or tool.Name:find(weaponName) then
+						if wantedWeaponName(tool.Name) == weaponName then
 							OwnedFarmedWeapons[weaponName] = true
 							break
 						end
@@ -2800,15 +2804,11 @@ elseif ids.Dungeon then
 			if shouldFarm and not OwnedFarmedWeapons[weaponName] then
 				-- For Kraken Blade, search all effects for any matching name
 				local weaponDrop = nil
-				if weaponName == "Kraken Blade" then
-					for _, child in pairs(workspace.Effects:GetChildren()) do
-						if string.find(child.Name, "Kraken Blade") then
-							weaponDrop = child
-							break
-						end
+				for _, child in pairs(workspace.Effects:GetChildren()) do
+					if wantedWeaponName(child.Name) == weaponName then
+						weaponDrop = child
+						break
 					end
-				else
-					weaponDrop = workspace.Effects:FindFirstChild(weaponName)
 				end
 
 				if weaponDrop then
@@ -3118,8 +3118,8 @@ elseif ids.Dungeon then
 
 			for _, v in pairs(workspace.Effects:GetChildren()) do
 				-- never delete the handcuff Key: cuffs that arrive late found it gone -> stuck cuffed
-				if v.Name == "Key" then
-					continue
+				if v.Name == "Key" or wantedWeaponName(v.Name) then
+					continue -- the handcuff key and wanted weapon drops are never deleted
 				end
 				if not keepItems[v.Name] and not v:FindFirstChild("Lock") then
 					v:Destroy()
@@ -3819,12 +3819,7 @@ elseif ids.Dungeon then
 		for _, tool in pairs(player.Backpack:GetChildren()) do
 			if tool:IsA("Tool") then
 				for weaponName, priority in pairs(WeaponPriority) do
-					local isMatch = false
-					if weaponName == "Kraken Blade" then
-						isMatch = string.find(tool.Name, "Kraken Blade") ~= nil
-					else
-						isMatch = (tool.Name == weaponName or string.find(tool.Name, weaponName))
-					end
+					local isMatch = wantedWeaponName(tool.Name) == weaponName
 
 					if isMatch and priority > bestPriority then
 						bestWeapon = tool
@@ -3837,12 +3832,7 @@ elseif ids.Dungeon then
 		for _, tool in pairs(Character:GetChildren()) do
 			if tool:IsA("Tool") then
 				for weaponName, priority in pairs(WeaponPriority) do
-					local isMatch = false
-					if weaponName == "Kraken Blade" then
-						isMatch = string.find(tool.Name, "Kraken Blade") ~= nil
-					else
-						isMatch = (tool.Name == weaponName or string.find(tool.Name, weaponName))
-					end
+					local isMatch = wantedWeaponName(tool.Name) == weaponName
 
 					if isMatch and priority > bestPriority then
 						bestWeapon = tool
