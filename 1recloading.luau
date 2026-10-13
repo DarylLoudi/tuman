@@ -379,6 +379,8 @@ if not LPH_OBFUSCATED then
 
 				errorAlreadyHandled = true
 
+				warn("[AutoDC] kicking on error: " .. tostring(err) .. " | stack: " .. tostring(stack))
+				task.wait(0.5) -- let the console flush the line above before the kick
 				player:Kick("Error detected - Auto DC to prevent ban")
 			end
 
