@@ -1,4 +1,6 @@
-getgenv().Config = {
+-- A Config set BEFORE this script runs (e.g. in the auto-execute file, above the loadstring)
+-- is kept; these defaults are only used when none was set.
+getgenv().Config = getgenv().Config or {
 	Misc = {
 		PsCode = "",
 		FastMode = false,
