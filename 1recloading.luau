@@ -2048,7 +2048,7 @@ elseif ids.Dungeon then
 	-- CFrame is pinned to it every frame -- no velocity writes, no instant teleport.
 	do
 		ZQ5 = ZQ5 or {}
-		local PAD_SIZE, PAD_STAND, PAD_SPEED = 24, 4, 25
+		local PAD_SIZE, PAD_STAND, PAD_SPEED = 24, 4, 12 -- slow rise: fast ones earn "Y+ too fast"
 		local overlap = OverlapParams.new()
 		overlap.FilterType = Enum.RaycastFilterType.Include
 		local busy = false
@@ -2309,11 +2309,8 @@ elseif ids.Dungeon then
 		end
 		local hum = Character:FindFirstChildOfClass("Humanoid")
 		local ok
-		if hum and hum.Health <= 300 then
-			ok = m1Attack(npc, 40, 0, Vector3.new(0, 80, 0), "Air") -- hide above, no swings
-		else
-			ok = m1Attack(npc, 20, 15, Vector3.new(0, 9, 0), "Air")
-		end
+		-- no low-health hide 80 studs up any more (flight strikes): always fight
+		ok = m1Attack(npc, 20, 15, Vector3.new(0, 9, 0), "Air")
 		if tick() - lastVeraLog > 3 then
 			lastVeraLog = tick()
 			print(string.format(
@@ -2371,7 +2368,7 @@ elseif ids.Dungeon then
 		local weaponStyle = Npc and Npc:FindFirstChild("Info") and Npc.Info:FindFirstChild("Weapon")
 		local finalPos = pos
 
-		if Character.Humanoid.Health > 300 then
+		do -- (the low-health hide 80 studs above the mob is removed: flight strikes)
 			if
 				Npc
 				and GetMagnitudeIgnoringY(Npc.HumanoidRootPart.Position) < 50
@@ -2414,7 +2411,7 @@ elseif ids.Dungeon then
 							offset = Vector3.new(0, 9, 0)
 							safeYoffset = 20
 						elseif Npc:GetAttribute("RealName") == "Elo The Bunny" then
-							offset = Vector3.new(0, 20, 3) -- hover 20 studs above Elo
+							offset = Vector3.new(0, 10, 3) -- hover 10 studs above Elo
 							safeYoffset = 20
 						elseif
 							weaponStyle
@@ -2452,10 +2449,6 @@ elseif ids.Dungeon then
 					return
 				end
 			end
-		else
-			local offset = Vector3.new(0, 80, 0)
-			m1Attack(Npc, 40, 0, offset, "Air")
-			return
 		end
 
 		if typeof(finalPos) == "CFrame" then
@@ -3543,6 +3536,15 @@ elseif ids.Dungeon then
 					local animationIdToCheck2 = 15246831598
 					local animationIdToCheck3 = 6647575254
 					for _, track in ipairs(playingAnimationTracks) do
+						-- log each Elo animation once, so a changed slam id shows up in the console
+						if Npc:GetAttribute("RealName") == "Elo The Bunny" then
+							EloSeenAnims = EloSeenAnims or {}
+							local aid = track.Animation.AnimationId
+							if not EloSeenAnims[aid] then
+								EloSeenAnims[aid] = true
+								print("[ELO] anim " .. aid .. " (" .. tostring(track.Name) .. ")")
+							end
+						end
 						if track.Animation.AnimationId == "rbxassetid://" .. animationIdToCheck then
 							NutcrackerAnims = true
 							Checker = true
@@ -3550,9 +3552,17 @@ elseif ids.Dungeon then
 							BlugoriAnims = false
 							Checker = true
 						elseif track.Animation.AnimationId == "rbxassetid://" .. animationIdToCheck3 then
-							-- Elo's slam: no dodge up any more (the 60-stud rise is what the user did
-							-- not want). Keep fighting from the normal hover spot.
+							-- Elo's slam: the hover slides sideways out of it (see ELO_DODGE_*), no rise
 							Checker = true
+							if ZQ5 then
+								if tick() > (ZQ5.dodgeUntil or 0) then
+									ZQ5.dodgeStart = tick()
+									ZQ5.dodgeDir = nil
+									print("[ELO] slam, dodging sideways")
+								end
+								ZQ5.dodgeMob = Npc
+								ZQ5.dodgeUntil = math.max(tick() + 0.5, ZQ5.dodgeStart + 1.8)
+							end
 						end
 					end
 					if not Checker then
@@ -4394,7 +4404,12 @@ elseif ids.Dungeon then
 				st.reason = "teleported"
 				return
 			end
-			if drift > 0.05 then
+			local hum2 = Character and Character:FindFirstChildOfClass("Humanoid")
+			if (hum2 and hum2:GetAttribute("isRagdolled")) or (drift > 3 and st.lastSet.Y - h.Position.Y > 1.5) then
+				-- knocked (a hit): carry on from where the hit left us. Snapping back UP to the
+				-- line is an instant rise -> "Y+ too fast" strike.
+				st.lastSet = h.Position
+			elseif drift > 0.05 then
 				local rot = h.CFrame - h.CFrame.Position
 				h.CFrame = CFrame.new(st.lastSet) * rot
 			end
@@ -5638,6 +5653,8 @@ elseif ids.Dungeon then
 		-- does not depend on a BodyVelocity winning against the humanoid -- the old BodyVelocity
 		-- hover pushed up at 15-40 studs/s and still sat at ground height on tutorial Vera.
 		local HOVER_PAD_SPEED, HOVER_PAD_STAND = 30, 4
+		local HOVER_CLIMB_SPEED = 14 -- max studs/s up
+		local ELO_DODGE_DIST, ELO_DODGE_UP, ELO_DODGE_SPEED = 30, 10, 45
 		local function hoverPadStop()
 			if ZQ5.hoverPad and ZQ5.hoverPad.Parent then
 				ZQ5.hoverPad:Destroy()
@@ -5740,6 +5757,23 @@ elseif ids.Dungeon then
 
 				local standAt = pad.Position + Vector3.new(0, HOVER_PAD_STAND, 0)
 
+				-- HIT (Elo's slam, any knock): never snap the body back up to the pad. The snap is
+				-- an instant rise and earned "Y+ too fast" strikes. While knocked (ragdolled, or the
+				-- body pushed off the pin), move the pad under the body where it is and climb back
+				-- slowly afterwards.
+				local myHum = Character and Character:FindFirstChildOfClass("Humanoid")
+				local knocked = myHum and myHum:GetAttribute("isRagdolled")
+				local below = standAt.Y - hrp.Position.Y
+				if knocked or below > 1.5 or (hrp.Position - standAt).Magnitude > 6 then
+					pad.Position = hrp.Position - Vector3.new(0, HOVER_PAD_STAND, 0)
+					ZQ5.lastPin = hrp.Position
+					ZQ5.hitAt = tick()
+					if knocked then
+						return -- leave the body to the hit; re-seat again next frame
+					end
+					standAt = hrp.Position
+				end
+
 				-- aim where a running mob WILL be (0.3s ahead, flat), so the pad keeps up with
 				-- fleeing / kiting mobs instead of trailing behind them
 				local mv = mhrp.AssemblyLinearVelocity
@@ -5748,10 +5782,48 @@ elseif ids.Dungeon then
 					lead = lead.Unit * 12
 				end
 				local targetPos = hoverPointFor(mob) + lead
+				local padSpeed = HOVER_PAD_SPEED
+
+				-- ELO'S SLAM: slide sideways out of it at hover height (no going up)
+				if ZQ5.dodgeMob == mob and tick() < (ZQ5.dodgeUntil or 0) then
+					if not ZQ5.dodgeDir then
+						local base = Vector3.new(standAt.X - mhrp.Position.X, 0, standAt.Z - mhrp.Position.Z)
+						if base.Magnitude < 1 then
+							local lv = mhrp.CFrame.LookVector
+							base = Vector3.new(-lv.X, 0, -lv.Z)
+						end
+						base = base.Unit
+						local dp = RaycastParams.new()
+						dp.FilterType = Enum.RaycastFilterType.Exclude
+						dp.FilterDescendantsInstances = { Character, workspace:FindFirstChild("NPCs"), workspace:FindFirstChild("Effects") }
+						pcall(function()
+							dp.RespectCanCollide = true
+						end)
+						local from = mhrp.Position + Vector3.new(0, ELO_DODGE_UP, 0)
+						for _, a in ipairs({ 0, 45, -45, 90, -90, 135, -135, 180 }) do
+							local d = (CFrame.Angles(0, math.rad(a), 0) * base)
+							if not workspace:Raycast(from, d * (ELO_DODGE_DIST + 3), dp) then
+								ZQ5.dodgeDir = d
+								break
+							end
+						end
+						ZQ5.dodgeDir = ZQ5.dodgeDir or base
+					end
+					targetPos = mhrp.Position + ZQ5.dodgeDir * ELO_DODGE_DIST + Vector3.new(0, ELO_DODGE_UP, 0)
+					padSpeed = ELO_DODGE_SPEED
+				else
+					ZQ5.dodgeDir = nil
+				end
+
 				local goal = targetPos - Vector3.new(0, HOVER_PAD_STAND, 0)
 				local toGoal = goal - pad.Position
 				if toGoal.Magnitude > 0.05 then
-					local step = toGoal.Unit * math.min(HOVER_PAD_SPEED * (dt or 1 / 60), toGoal.Magnitude)
+					local step = toGoal.Unit * math.min(padSpeed * (dt or 1 / 60), toGoal.Magnitude)
+					-- climb slowly (fast rises earn "Y+ too fast"), slower still right after a hit
+					local maxUp = (tick() - (ZQ5.hitAt or 0) < 2 and 6 or HOVER_CLIMB_SPEED) * (dt or 1 / 60)
+					if step.Y > maxUp then
+						step = Vector3.new(step.X, maxUp, step.Z)
+					end
 					-- never carry the body through a wall / floor (noclip + tp flags): if the body or
 					-- head line of this step hits geometry, hold here this frame
 					local rp = RaycastParams.new()
@@ -5767,9 +5839,9 @@ elseif ids.Dungeon then
 						rp.RespectCanCollide = true
 					end)
 					local from = pad.Position + Vector3.new(0, HOVER_PAD_STAND, 0)
-					local probe = step + step.Unit * 1.5
-					local blocked = workspace:Raycast(from, probe, rp)
-						or workspace:Raycast(from + Vector3.new(0, 1.5, 0), probe, rp)
+					local probe = step.Magnitude > 1e-3 and (step + step.Unit * 1.5) or Vector3.new(0, 0, 0)
+					local blocked = probe.Magnitude > 0
+						and (workspace:Raycast(from, probe, rp) or workspace:Raycast(from + Vector3.new(0, 1.5, 0), probe, rp))
 					if not blocked then
 						pad.Position = pad.Position + step
 						ZQ5.padBlockedSince = nil
@@ -5786,6 +5858,7 @@ elseif ids.Dungeon then
 				standAt = pad.Position + Vector3.new(0, HOVER_PAD_STAND, 0)
 
 				ZQ5.lastPin = standAt
+				hrp.AssemblyLinearVelocity = Vector3.zero
 				if ZQ5.fight and facingDir and (targetPos - standAt).Magnitude <= ARRIVE_THRESHOLD then
 					hrp.CFrame = CFrame.lookAt(standAt, standAt + facingDir)
 				else
