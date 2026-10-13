@@ -16,15 +16,6 @@ getgenv().Config = {
 	},
 }
 
--- SINGLE INSTANCE: a second copy of this script (autoexec + manual run, etc.) fights the first one
--- for the character -- two movers snapping it back and forth. Only the first copy runs.
-if getgenv().ZephyronRunning then
-	warn("[INSTANCE] another copy of this script is already running here - this copy exits")
-	return
-end
-getgenv().ZephyronRunning = true
-print("[INSTANCE] started (single instance guard)")
-
 if LPH_OBFUSCATED then
 	LRM_INIT_SCRIPT(function()
 		function isIdInList(id, ids)
@@ -2061,8 +2052,12 @@ elseif ids.Dungeon then
 			local bestRise
 			for _, part in ipairs(workspace:GetPartBoundsInRadius(h.Position, 1.5, overlap)) do
 				if part.CanCollide and math.abs(part.CFrame.UpVector.Y) > 0.99 then
+					local rel = part.CFrame:PointToObjectSpace(h.Position)
+					local inside = math.abs(rel.X) <= part.Size.X / 2
+						and math.abs(rel.Y) <= part.Size.Y / 2
+						and math.abs(rel.Z) <= part.Size.Z / 2
 					local rise = part.Position.Y + part.Size.Y / 2 - h.Position.Y
-					if rise > 0 and rise <= 14 and (not bestRise or rise > bestRise) then
+					if inside and rise > 0 and rise <= 14 and (not bestRise or rise > bestRise) then
 						bestRise = rise
 					end
 				end
@@ -2099,6 +2094,10 @@ elseif ids.Dungeon then
 					if not h or not h.Parent then
 						break
 					end
+					-- the game moved us (floor change): stop pinning
+					if (h.Position - (pad.Position + Vector3.new(0, PAD_STAND, 0))).Magnitude > 40 then
+						break
+					end
 					pad.Position = pad.Position + Vector3.new(0, math.min(PAD_SPEED * dt, goalY - pad.Position.Y), 0)
 					h.CFrame = CFrame.new(pad.Position + Vector3.new(0, PAD_STAND, 0)) * (h.CFrame - h.CFrame.Position)
 				end
@@ -2108,10 +2107,54 @@ elseif ids.Dungeon then
 			busy = false
 		end
 
-		-- lift out of whatever we are inside (floor slab), else a small default
-		function PadRiseClear(default)
-			local rise = scanRise()
-			PadRise(rise and (rise + 3.2) or (default or 12))
+		-- ride a pad up dy studs, hold `hold` seconds, ride it back down, remove it
+		function PadDodge(dy, hold)
+			local h = PlayerHumpart
+			if busy or not h or not h.Parent then
+				return
+			end
+			busy = true
+			ZQ5.rescuing = true
+			local pad = Instance.new("Part")
+			pad.Name = "pad"
+			pad.Size = Vector3.new(PAD_SIZE, 1, PAD_SIZE)
+			pad.Anchored = true
+			pad.CanCollide = true
+			pad.Transparency = 1
+			pad.Position = h.Position - Vector3.new(0, PAD_STAND, 0)
+			pad.Parent = workspace
+			local function ride(goalY)
+				local deadline = os.clock() + math.abs(goalY - pad.Position.Y) / PAD_SPEED + 3
+				while math.abs(pad.Position.Y - goalY) > 0.05 and os.clock() < deadline do
+					local dt = Services.RunService.Heartbeat:Wait()
+					h = PlayerHumpart
+					if not h or not h.Parent then
+						return
+					end
+					if (h.Position - (pad.Position + Vector3.new(0, PAD_STAND, 0))).Magnitude > 40 then
+						return
+					end
+					local d = goalY - pad.Position.Y
+					pad.Position = pad.Position + Vector3.new(0, math.sign(d) * math.min(PAD_SPEED * dt, math.abs(d)), 0)
+					h.CFrame = CFrame.new(pad.Position + Vector3.new(0, PAD_STAND, 0)) * (h.CFrame - h.CFrame.Position)
+				end
+			end
+			pcall(function()
+				local startY = pad.Position.Y
+				ride(startY + dy)
+				local t = os.clock() + (hold or 1)
+				while os.clock() < t do
+					Services.RunService.Heartbeat:Wait()
+					h = PlayerHumpart
+					if h and h.Parent then
+						h.CFrame = CFrame.new(pad.Position + Vector3.new(0, PAD_STAND, 0)) * (h.CFrame - h.CFrame.Position)
+					end
+				end
+				ride(startY)
+			end)
+			pad:Destroy()
+			ZQ5.rescuing = false
+			busy = false
 		end
 
 		Services.RunService.Heartbeat:Connect(function()
@@ -3394,10 +3437,9 @@ elseif ids.Dungeon then
 							local targetY = oldYpos + 60
 							Facemouse()
 							task.wait(0.3)
-							-- was two instant CFrame writes (up 60, then back); tween both ways
-							ZQ5.move(Vector3.new(PlayerHumpart.Position.X, targetY, PlayerHumpart.Position.Z), 70, {})
-							task.wait(1)
-							ZQ5.move(Vector3.new(PlayerHumpart.Position.X, oldYpos, PlayerHumpart.Position.Z), 70, {})
+							-- was two instant CFrame writes (up 60, then back). Ride a pad up and down
+							-- instead: standing on a pad reads as grounded, so no flight strikes.
+							pcall(PadDodge, targetY - oldYpos, 1.5)
 							EloAnims = false
 						end
 					end
@@ -4385,9 +4427,6 @@ elseif ids.Dungeon then
 			end
 			ZQ5.walking = false
 			if not failed then
-				if nearOnly and (PlayerHumpart.Position - dest).Magnitude <= 9 then
-					ZQ5.move(dest, WALK_SPEED, {}) -- the short hop onto the target itself
-				end
 				return true, nil
 			end
 			print(string.format("[WALK] %s at %s, backing up to %s and re-pathing (try %d)", failed, tostring(PlayerHumpart.Position), tostring(lastGood), attempt))
@@ -5360,6 +5399,38 @@ elseif ids.Dungeon then
 			end
 			ZQ5.hoverPad = nil
 		end
+		-- when the hover ends in the air, ride the pad DOWN to the ground before removing it
+		-- (BossRotation hoverLand): dropping unsupported earns Greater Flight Strikes
+		local function hoverPadLandStep(hrp, dt)
+			local pad = ZQ5.hoverPad
+			if not (pad and pad.Parent) then
+				return
+			end
+			if ZQ5.moving or not hrp or not hrp.Parent then
+				hoverPadStop()
+				return
+			end
+			-- the game moved us (floor change): never pin the body back onto the old pad
+			if (hrp.Position - (pad.Position + Vector3.new(0, HOVER_PAD_STAND, 0))).Magnitude > 40 then
+				hoverPadStop()
+				return
+			end
+			local params = RaycastParams.new()
+			params.FilterType = Enum.RaycastFilterType.Exclude
+			params.FilterDescendantsInstances = { pad, Character, workspace:FindFirstChild("NPCs"), workspace:FindFirstChild("Effects") }
+			pcall(function()
+				params.RespectCanCollide = true
+			end)
+			local hit = workspace:Raycast(pad.Position, Vector3.new(0, -500, 0), params)
+			if not hit or pad.Position.Y - hit.Position.Y <= 1 then
+				hoverPadStop()
+				return
+			end
+			local down = math.min(HOVER_PAD_SPEED * (dt or 1 / 60), pad.Position.Y - hit.Position.Y - 0.5)
+			pad.Position = pad.Position - Vector3.new(0, down, 0)
+			hrp.CFrame = CFrame.new(pad.Position + Vector3.new(0, HOVER_PAD_STAND, 0)) * (hrp.CFrame - hrp.CFrame.Position)
+		end
+
 		RunSvc.Heartbeat:Connect(function(dt)
 			pcall(function()
 				local hrp = PlayerHumpart
@@ -5369,11 +5440,9 @@ elseif ids.Dungeon then
 					and not RaiuiAnims
 					and not MovementSystem:IsLocked()
 				if not active or not hrp or not hrp.Parent then
-					if ZQ5.hoverActive then
-						ZQ5.hoverActive = false
-						hoverPadStop()
-					end
+					ZQ5.hoverActive = false
 					ZQ5.lastPin = nil
+					hoverPadLandStep(hrp, dt)
 					return
 				end
 
@@ -5387,6 +5456,18 @@ elseif ids.Dungeon then
 					ZQ5.hover = false
 					ZQ5.hoverActive = false
 					hoverPadStop()
+					return
+				end
+
+				local mob = ZQ5.hoverMob
+				local mhrp = mob and isValidMob(mob) and mob.HumanoidRootPart
+				if not mhrp then
+					-- no hover target this frame (dead / not picked yet): land and let go, but do
+					-- NOT clear the lease -- the aggro controller picks hoverMob a frame after
+					-- m1Attack starts the lease, and clearing it here meant the hover never began
+					ZQ5.lastPin = nil
+					ZQ5.hoverActive = false
+					hoverPadLandStep(hrp, dt)
 					return
 				end
 
@@ -5413,18 +5494,7 @@ elseif ids.Dungeon then
 					ZQ5.hoverPad = pad
 				end
 
-				local mob = ZQ5.hoverMob
-				local mhrp = mob and isValidMob(mob) and mob.HumanoidRootPart
 				local standAt = pad.Position + Vector3.new(0, HOVER_PAD_STAND, 0)
-				if not mhrp then
-					-- no hover target this frame (dead / not picked yet): let go of the body, but
-					-- do NOT clear the lease -- the aggro controller picks hoverMob a frame after
-					-- m1Attack starts the lease, and clearing it here meant the hover never began
-					ZQ5.lastPin = nil
-					ZQ5.hoverActive = false
-					hoverPadStop()
-					return
-				end
 
 				local targetPos = hoverPointFor(mob)
 				local goal = targetPos - Vector3.new(0, HOVER_PAD_STAND, 0)
@@ -6320,7 +6390,7 @@ elseif ids.Dungeon then
 						targetFloorPosition = tutorialVera.HumanoidRootPart.Position
 						selected_Offset = targetPosition.Y
 						if GetMagnitudeIgnoringY(tutorialVera.HumanoidRootPart.Position) < 20 then
-							m1Attack(tutorialVera, 20, 10, Vector3.new(0, 5, 4))
+							m1Attack(tutorialVera, 20, 15, Vector3.new(0, 9, 0))
 						else
 							controlTower(CFrame.new(targetPosition), Speed)
 						end
