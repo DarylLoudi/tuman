@@ -2,7 +2,7 @@
   "mcpServers": {
     "potassium": {
       "type": "http",
-      "url": "https://fig-knight-behind-retro.trycloudflare.com/mcp"
+      "url": "https://faces-terrain-seeker-ate.trycloudflare.com/mcp"
     }
   }
 }
