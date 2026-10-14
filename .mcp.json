@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "potassium": {
+      "type": "http",
+      "url": "https://faces-terrain-seeker-ate.trycloudflare.com/mcp"
+    }
+  }
+}
