@@ -1,3 +1,9 @@
+-- WYVERN MOBILE: wyverncinder2 plus phone performance (2026-10-24):
+--   * 3D rendering OFF from the start, with an on-screen "3D: OFF / ON" button to look
+--   * every game sound muted (master volume + any sound that appears later)
+--   * white world leaves workspace.Effects alone (with nothing drawn, recolouring a boss
+--     skill's short-lived effect parts is wasted work at the busiest moment)
+--
 -- boss rotation launcher: the source below reads BossRotation.Enabled only once
 -- at launch, so the panel's "Run the rotation" toggle can't start it afterwards.
 -- execute -> rotation starts; press Y -> stops cleanly (execute again to restart)
@@ -87,6 +93,69 @@ do
 	-- bossRotationEnabled), so another copy executed later can't auto-start the farm. It used to
 	-- be a 5s timer, which under autoexec fired before the source read it (the loading screen
 	-- after a teleport takes longer) -> only the GUI loaded, no rotation (2026-10-24).
+
+	-- MOBILE PERFORMANCE. Client-only: nothing here is sent to the server, and the game's
+	-- scripts can't read whether 3D rendering is on.
+	g.KrakenConfig.WhiteWorldSkipEffects = true
+
+	task.spawn(function()
+		pcall(function()
+			local RunService = game:GetService("RunService")
+			local rendering = false
+			RunService:Set3dRenderingEnabled(false)
+
+			-- mute: the master volume, plus every sound that shows up later (Volume 0, never
+			-- stopped or deleted -- the game's scripts may wait on them)
+			pcall(function()
+				UserSettings():GetService("UserGameSettings").MasterVolume = 0
+			end)
+
+			local function mute(instance)
+				if instance:IsA("Sound") then
+					pcall(function()
+						instance.Volume = 0
+					end)
+				end
+			end
+
+			for _, root in ipairs({ workspace, game:GetService("SoundService") }) do
+				root.DescendantAdded:Connect(mute)
+			end
+
+			for _, sound in ipairs(game:GetService("SoundService"):GetDescendants()) do mute(sound) end
+
+			-- the 3D toggle button (top right); Activated works for taps
+			local gui = Instance.new("ScreenGui")
+			gui.Name = tostring(math.random(100000, 999999))
+			gui.ResetOnSpawn = false
+			gui.IgnoreGuiInset = true
+			gui.DisplayOrder = 1000
+			gui.Parent = (gethui and gethui()) or game:GetService("CoreGui")
+
+			local button = Instance.new("TextButton")
+			button.Size = UDim2.fromOffset(96, 34)
+			button.Position = UDim2.new(1, -106, 0, 70)
+			button.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+			button.BackgroundTransparency = 0.2
+			button.TextColor3 = Color3.new(1, 1, 1)
+			button.TextScaled = true
+			button.Font = Enum.Font.GothamBold
+			button.Text = "3D: OFF"
+			button.Parent = gui
+
+			local corner = Instance.new("UICorner")
+			corner.CornerRadius = UDim.new(0, 8)
+			corner.Parent = button
+
+			button.Activated:Connect(function()
+				rendering = not rendering
+				pcall(function()
+					RunService:Set3dRenderingEnabled(rendering)
+				end)
+				button.Text = rendering and "3D: ON" or "3D: OFF"
+			end)
+		end)
+	end)
 
 	-- Y = kill switch
 	if not g.__wyvernYBound then
@@ -4764,10 +4833,37 @@ local function createAutoMerchant()
 			return frame
 		end
 
+		-- talk to him through his ProximityPrompt first -- the T key is a keyboard press, which
+		-- did nothing on a phone (2026-10-24). T stays as the fallback.
+		local function talkViaPrompt()
+			local npcs = workspace:FindFirstChild("NPCs")
+			local npc = npcs and (npcs:FindFirstChild("Traveling Merchant") or npcs:FindFirstChild("TravelingMerchant"))
+			local prompt = npc and npc:FindFirstChildWhichIsA("ProximityPrompt", true)
+			if not prompt then return false end
+
+			if fireproximityprompt then
+				pcall(fireproximityprompt, prompt)
+			else
+				pcall(function()
+					prompt:InputHoldBegin()
+					task.wait((prompt.HoldDuration or 0) + 0.1)
+					prompt:InputHoldEnd()
+				end)
+			end
+
+			return true
+		end
+
 		if not isShopListReady() then
-			holdTalkKey(function()
+			local talked = talkViaPrompt() and waitUntil(function()
 				return getChatFrame() ~= nil or isShopListReady()
-			end, 4)
+			end, 3)
+
+			if not talked then
+				holdTalkKey(function()
+					return getChatFrame() ~= nil or isShopListReady()
+				end, 4)
+			end
 		end
 
 		if isShopListReady() then return true end
@@ -7311,15 +7407,31 @@ local function createPerformance()
 			local BATCH = 300
 			local queue, head = {}, 1
 
-			local function excluded(instance)
+			-- the folders / characters to leave alone, gathered ONCE per frame (it used to look them
+			-- up again for every single instance -- a few thousand times a frame while a freshly
+			-- streamed island was being whitened)
+			local skipRoots = {}
+			local skipEffects = getgenv and getgenv().KrakenConfig and getgenv().KrakenConfig.WhiteWorldSkipEffects == true
+
+			local function refreshSkipRoots()
+				table.clear(skipRoots)
 				local npcs = workspace:FindFirstChild("NPCs")
 				local playerCharacters = workspace:FindFirstChild("PlayerCharacters")
-				if npcs and (instance == npcs or instance:IsDescendantOf(npcs)) then return true end
-				if playerCharacters and (instance == playerCharacters or instance:IsDescendantOf(playerCharacters)) then return true end
+				if npcs then skipRoots[#skipRoots + 1] = npcs end
+				if playerCharacters then skipRoots[#skipRoots + 1] = playerCharacters end
 
 				for _, player in ipairs(Players:GetPlayers()) do
-					local character = player.Character
-					if character and (instance == character or instance:IsDescendantOf(character)) then return true end
+					if player.Character then skipRoots[#skipRoots + 1] = player.Character end
+				end
+
+				-- mobile: leave boss-skill effects alone (WhiteWorldSkipEffects, launcher header)
+				local effects = skipEffects and workspace:FindFirstChild("Effects")
+				if effects then skipRoots[#skipRoots + 1] = effects end
+			end
+
+			local function excluded(instance)
+				for _, root in ipairs(skipRoots) do
+					if instance == root or instance:IsDescendantOf(root) then return true end
 				end
 
 				return false
@@ -7376,14 +7488,28 @@ local function createPerformance()
 
 			local connections = {}
 
+			-- mobile: don't even queue boss-skill effects (they're skipped anyway; this saves the
+			-- queue work during the busiest frames)
+			local effectsFolder = skipEffects and workspace:FindFirstChild("Effects")
+
 			connections[1] = workspace.DescendantAdded:Connect(function(instance)
+				if effectsFolder and instance:IsDescendantOf(effectsFolder) then return end
 				push(instance, false)
 			end)
 
-			connections[2] = RunService.Heartbeat:Connect(function()
-				local processed = 0
+			-- a TIME budget per frame, not a fixed count: 300 a frame no matter how slow the device
+			-- was caused lag spikes on a phone (~14 fps) whenever a new area streamed in mid-flight.
+			-- Slow devices just take a few more frames to whiten it.
+			local FRAME_BUDGET = 0.002
 
-				while head <= #queue and processed < BATCH do
+			connections[2] = RunService.Heartbeat:Connect(function()
+				if head > #queue then return end
+
+				refreshSkipRoots()
+				local processed = 0
+				local stopAt = os.clock() + FRAME_BUDGET
+
+				while head <= #queue and processed < BATCH and os.clock() < stopAt do
 					local entry = queue[head]
 					queue[head] = nil
 					head += 1
@@ -12606,20 +12732,31 @@ local function createBossRotation()
 			return false
 		end
 
+		-- the hover's raycast settings: built ONCE and its ignore list refreshed once a second.
+		-- Building a new RaycastParams + list every frame for a whole fight was a steady stream of
+		-- garbage, and the collection pauses showed up as lag spikes on a ~14 fps phone (2026-10-24).
+		local padParams, padParamsPad, padParamsAt = nil, nil, -math.huge
+
 		local function padRayParams(pad)
+			if padParams and padParamsPad == pad and os.clock() - padParamsAt < 1 then return padParams end
+
 			local list = {}
 
 			for _, instance in ipairs({ pad, localPlayer.Character, workspace:FindFirstChild("NPCs"), workspace:FindFirstChild("Effects"), workspace:FindFirstChild("PlayerCharacters") }) do
 				if instance then list[#list + 1] = instance end
 			end
 
-			local params = RaycastParams.new()
-			params.FilterType = Enum.RaycastFilterType.Exclude
-			params.FilterDescendantsInstances = list
-			pcall(function()
-				params.RespectCanCollide = true
-			end)
-			return params
+			if not padParams then
+				padParams = RaycastParams.new()
+				padParams.FilterType = Enum.RaycastFilterType.Exclude
+				pcall(function()
+					padParams.RespectCanCollide = true
+				end)
+			end
+
+			padParams.FilterDescendantsInstances = list
+			padParamsPad, padParamsAt = pad, os.clock()
+			return padParams
 		end
 
 		local function isLiveNpc(npc)
@@ -13305,11 +13442,16 @@ local function createBossRotation()
 					if offset.Magnitude == 0 then offset = root.CFrame.LookVector end
 					local damageCFrame = CFrame.new(target.Position - offset.Unit * 5 + Vector3.new(0, 1, 0), target.Position)
 
-					-- the server registers the swing first, then the damage
+					-- M1 SYNC (impel1's ZephyronCombat.M1Sync): the 0.4s clock starts when the swing
+					-- STARTS. It used to start after both calls had answered -- 0.4s + 2 round trips --
+					-- so on a phone at ~200ms ping the hits came ~0.8s apart and the boss got turns in
+					-- the gaps. The calls still go out in order: the server registers the swing first,
+					-- then the damage.
+					local swingAt = os.clock()
 					remote:InvokeServer({ "swingsfx", "Sword", combo, "Ground", false, bladeSlash(combo), 2, 1.5 })
 					remote:InvokeServer({ "damage", targets, "Sword", { combo, "Ground", "Sword" }, true, damageCFrame, aircombo = "Ground" })
 
-					lastHit = os.clock()
+					lastHit = swingAt
 					combo = combo % MELEE_COMBO_MAX + 1
 
 					-- the swing included him: that's the aggro M1
@@ -13859,6 +14001,35 @@ local function createBossRotation()
 				end
 
 				localPlayer.CharacterAdded:Connect(keepOutOfPhysicsState)
+
+				-- NO SITTING while farming: a noclip trip flew through a Seat, the character sat
+				-- down and got stuck (2026-10-24). Seated is disabled on the humanoid; if a seat
+				-- grabs us anyway, stand straight back up and drop its weld.
+				local function keepFromSitting(character)
+					local humanoid = character:FindFirstChildOfClass("Humanoid") or character:WaitForChild("Humanoid", 5)
+					if not humanoid then return end
+
+					pcall(function()
+						humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
+					end)
+
+					humanoid:GetPropertyChangedSignal("SeatPart"):Connect(function()
+						local seat = humanoid.SeatPart
+						if not (seat and running) then return end
+
+						pcall(function()
+							humanoid.Sit = false
+							local weld = seat:FindFirstChild("SeatWeld")
+							if weld then weld:Destroy() end
+						end)
+
+						log("Got pulled into a seat (" .. seat:GetFullName() .. ") - stood back up.")
+					end)
+				end
+
+				if localPlayer.Character then task.spawn(keepFromSitting, localPlayer.Character) end
+				localPlayer.CharacterAdded:Connect(keepFromSitting)
+
 				log("Boss rotation starting for " .. localPlayer.Name .. ".")
 				rememberTravelTool()
 				watchFlightStrikes()
