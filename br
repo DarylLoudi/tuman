@@ -1,8 +1,8 @@
 -- WYVERN MOBILE: wyverncinder2 plus phone performance (2026-10-24):
---   * 3D rendering OFF from the start, with an on-screen "3D: OFF / ON" button to look
 --   * every game sound muted (master volume + any sound that appears later)
---   * white world leaves workspace.Effects alone (with nothing drawn, recolouring a boss
---     skill's short-lived effect parts is wasted work at the busiest moment)
+--   * white world leaves workspace.Effects alone (recolouring a boss skill's short-lived
+--     effect parts is wasted work at the busiest moment)
+--   (3D rendering off was tried and removed by request)
 --
 -- boss rotation launcher: the source below reads BossRotation.Enabled only once
 -- at launch, so the panel's "Run the rotation" toggle can't start it afterwards.
@@ -94,16 +94,12 @@ do
 	-- be a 5s timer, which under autoexec fired before the source read it (the loading screen
 	-- after a teleport takes longer) -> only the GUI loaded, no rotation (2026-10-24).
 
-	-- MOBILE PERFORMANCE. Client-only: nothing here is sent to the server, and the game's
-	-- scripts can't read whether 3D rendering is on.
+	-- MOBILE PERFORMANCE. Client-only: nothing here is sent to the server.
+	-- (3D rendering off + its toggle button were removed by request, 2026-10-24.)
 	g.KrakenConfig.WhiteWorldSkipEffects = true
 
 	task.spawn(function()
 		pcall(function()
-			local RunService = game:GetService("RunService")
-			local rendering = false
-			RunService:Set3dRenderingEnabled(false)
-
 			-- mute: the master volume, plus every sound that shows up later (Volume 0, never
 			-- stopped or deleted -- the game's scripts may wait on them)
 			pcall(function()
@@ -123,37 +119,6 @@ do
 			end
 
 			for _, sound in ipairs(game:GetService("SoundService"):GetDescendants()) do mute(sound) end
-
-			-- the 3D toggle button (top right); Activated works for taps
-			local gui = Instance.new("ScreenGui")
-			gui.Name = tostring(math.random(100000, 999999))
-			gui.ResetOnSpawn = false
-			gui.IgnoreGuiInset = true
-			gui.DisplayOrder = 1000
-			gui.Parent = (gethui and gethui()) or game:GetService("CoreGui")
-
-			local button = Instance.new("TextButton")
-			button.Size = UDim2.fromOffset(96, 34)
-			button.Position = UDim2.new(1, -106, 0, 70)
-			button.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-			button.BackgroundTransparency = 0.2
-			button.TextColor3 = Color3.new(1, 1, 1)
-			button.TextScaled = true
-			button.Font = Enum.Font.GothamBold
-			button.Text = "3D: OFF"
-			button.Parent = gui
-
-			local corner = Instance.new("UICorner")
-			corner.CornerRadius = UDim.new(0, 8)
-			corner.Parent = button
-
-			button.Activated:Connect(function()
-				rendering = not rendering
-				pcall(function()
-					RunService:Set3dRenderingEnabled(rendering)
-				end)
-				button.Text = rendering and "3D: ON" or "3D: OFF"
-			end)
 		end)
 	end)
 
@@ -13346,6 +13311,18 @@ local function createBossRotation()
 			local ok, err = pcall(function()
 				local combo, lastHit, jitter, jitterAt, busoAt = 1, 0, 0, 0, os.clock()
 				local crossSlashReadyAt = 0
+
+				-- MOBILE M1 PACING (2026-10-24). At ~14 fps the loop only runs once per ~72ms frame
+				-- and each M1 waited on two server replies, so hits landed late and every late hit
+				-- pushed the next one later -- gaps the boss attacked through. Now:
+				--   * a fixed schedule: each M1 is due HIT_WAIT after the previous one was DUE, so a
+				--     late one is followed by an earlier one and the average stays at the PC's 0.4s;
+				--     never closer than MELEE_MIN_GAP, and after a real stall (more than one whole
+				--     HIT_WAIT behind) it restarts from now instead of bursting to catch up
+				--   * the two calls go out on their own thread (still swing -> damage, one swing at a
+				--     time), so the loop isn't stuck waiting on replies to line up the next hit
+				local MELEE_MIN_GAP = 0.3
+				local nextSwingAt, swingInFlight = 0, false
 				local remote = ReplicatedStorage:WaitForChild("Events"):WaitForChild("CombatRegister")
 
 				-- lure "aggro" done: he's been hit once -> fly back to the leash centre
@@ -13384,6 +13361,7 @@ local function createBossRotation()
 						end
 
 						lastHit = os.clock()
+						nextSwingAt = lastHit + MELEE_HIT_WAIT
 						continue
 					end
 
@@ -13399,7 +13377,7 @@ local function createBossRotation()
 						task.spawn(busoOn, busoState)
 					end
 
-					if os.clock() - lastHit < MELEE_HIT_WAIT + jitter or not notOnErrorHold()
+					if os.clock() < nextSwingAt or swingInFlight or not notOnErrorHold()
 						or not root or character:FindFirstChild("Stun") then
 						continue
 					end
@@ -13448,8 +13426,23 @@ local function createBossRotation()
 					-- the gaps. The calls still go out in order: the server registers the swing first,
 					-- then the damage.
 					local swingAt = os.clock()
-					remote:InvokeServer({ "swingsfx", "Sword", combo, "Ground", false, bladeSlash(combo), 2, 1.5 })
-					remote:InvokeServer({ "damage", targets, "Sword", { combo, "Ground", "Sword" }, true, damageCFrame, aircombo = "Ground" })
+
+					-- due time of THIS swing: the scheduled one, unless we're a whole HIT_WAIT or more
+					-- behind it (a stall, a block, a skill cast) -- then start fresh from now
+					local due = (nextSwingAt > 0 and swingAt - nextSwingAt < MELEE_HIT_WAIT) and nextSwingAt or swingAt
+					nextSwingAt = math.max(due + MELEE_HIT_WAIT + jitter, swingAt + MELEE_MIN_GAP)
+
+					local swingCombo, swingSlash = combo, bladeSlash(combo)
+					swingInFlight = true
+
+					task.spawn(function()
+						pcall(function()
+							remote:InvokeServer({ "swingsfx", "Sword", swingCombo, "Ground", false, swingSlash, 2, 1.5 })
+							remote:InvokeServer({ "damage", targets, "Sword", { swingCombo, "Ground", "Sword" }, true, damageCFrame, aircombo = "Ground" })
+						end)
+
+						swingInFlight = false
+					end)
 
 					lastHit = swingAt
 					combo = combo % MELEE_COMBO_MAX + 1
