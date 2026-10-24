@@ -13372,16 +13372,13 @@ local function createBossRotation()
 					if offset.Magnitude == 0 then offset = root.CFrame.LookVector end
 					local damageCFrame = CFrame.new(target.Position - offset.Unit * 5 + Vector3.new(0, 1, 0), target.Position)
 
-					-- M1 SYNC (impel1's ZephyronCombat.M1Sync): the 0.4s clock starts when the swing
-					-- STARTS. It used to start after both calls had answered -- 0.4s + 2 round trips --
-					-- so on a phone at ~200ms ping the hits came ~0.8s apart and the boss got turns in
-					-- the gaps. The calls still go out in order: the server registers the swing first,
-					-- then the damage.
-					local swingAt = os.clock()
+					-- the 0.4s clock starts after both calls have answered (the M1 sync -- clock from
+					-- the swing's start -- was reverted on PC, 2026-10-24: suspected of "M1 error"
+					-- refusals; the mobile copy keeps its own pacing)
 					remote:InvokeServer({ "swingsfx", "Sword", combo, "Ground", false, bladeSlash(combo), 2, 1.5 })
 					remote:InvokeServer({ "damage", targets, "Sword", { combo, "Ground", "Sword" }, true, damageCFrame, aircombo = "Ground" })
 
-					lastHit = swingAt
+					lastHit = os.clock()
 					combo = combo % MELEE_COMBO_MAX + 1
 
 					-- the swing included him: that's the aggro M1
