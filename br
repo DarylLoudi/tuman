@@ -11474,6 +11474,7 @@ local function createBossRotation()
 				leashCenter = Vector3.new(12685.1982, 20.7147141, 2761.29639),
 				leashRadius = 150,
 				lureToLeash = true,
+				searchRadius = 900, -- sails in: may be on the ship far out (findBoss)
 			},
 			Roger = {
 				spawn = CFrame.new(12685.1982, 20.7147141, 2761.29639, 0.0125917215, 3.42289077e-08, -0.999920726, -1.06017808e-07, 1, 3.2896569e-08, 0.999920726, 1.05595177e-07, 0.0125917215),
@@ -11487,6 +11488,7 @@ local function createBossRotation()
 				leashCenter = Vector3.new(12685.1982, 20.7147141, 2761.29639),
 				leashRadius = 150,
 				lureToLeash = true,
+				searchRadius = 900, -- sails in: may be on the ship far out (findBoss)
 			},
 		}
 
@@ -11772,9 +11774,12 @@ local function createBossRotation()
 		end
 
 		-- travel
+		-- searchRadius: the world bosses sail in and can sit on their ships well past 300 studs
+		-- from the island spawn -- Hawk Eye was in sight but "not there", so Roger got fought
+		-- first (2026-10-24)
 		local function findBoss(bossName)
 			local boss = bosses[bossName]
-			return Abilities.findTargetModel(type(boss.keyword) == "table" and boss.keyword or { boss.keyword }, boss.spawn.Position, 300)
+			return Abilities.findTargetModel(type(boss.keyword) == "table" and boss.keyword or { boss.keyword }, boss.spawn.Position, boss.searchRadius or 300)
 		end
 
 		local function speedFactor()
