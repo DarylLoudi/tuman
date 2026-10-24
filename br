@@ -7458,6 +7458,102 @@ local function createPerformance()
 			if g then g.__wyvernWhiteWorld = connections end
 			return true
 		end,
+
+		-- EFFECT HIDER (user, 2026-10-24: Ghost Princess's hollow explosions lag a lot): everything
+		-- in workspace.Effects goes invisible the moment it appears, and the particles / beams /
+		-- trails / lights on NPCs (bosses) are switched off. HIDDEN, never destroyed: the game's
+		-- own effect scripts still hold their objects (no errors from them), and Wyvern still
+		-- counts soul Cakes / finds the fishing hook in there. The boss dodge reads animations, not
+		-- effects, so it's untouched. Parts use LocalTransparencyModifier (the game's fade tweens
+		-- only touch Transparency); particles get a zero Lifetime, which also empties scripted
+		-- Emit() bursts that Enabled = false alone doesn't stop.
+		EnableEffectHider = function()
+			local g = getgenv and getgenv()
+
+			if g and g.__wyvernEffectHider then
+				pcall(function()
+					for _, connection in ipairs(g.__wyvernEffectHider) do connection:Disconnect() end
+				end)
+			end
+
+			local ZERO_LIFE = NumberRange.new(0)
+			local INVISIBLE = NumberSequence.new(1)
+
+			-- emitters / lights only: safe on NPC models (no parts or animations touched)
+			local function quiet(instance)
+				if instance:IsA("ParticleEmitter") then
+					instance.Enabled = false
+					instance.Lifetime = ZERO_LIFE
+				elseif instance:IsA("Trail") or instance:IsA("Beam") then
+					instance.Enabled = false
+					instance.Transparency = INVISIBLE
+				elseif instance:IsA("Fire") or instance:IsA("Smoke") or instance:IsA("Sparkles")
+					or instance:IsA("Light") or instance:IsA("Highlight") then
+					instance.Enabled = false
+				end
+			end
+
+			local function hide(instance)
+				if instance:IsA("BasePart") then
+					instance.LocalTransparencyModifier = 1
+					instance.CastShadow = false
+				elseif instance:IsA("Decal") then
+					instance.LocalTransparencyModifier = 1
+				elseif instance:IsA("BillboardGui") or instance:IsA("SurfaceGui") then
+					instance.Enabled = false
+				else
+					quiet(instance)
+				end
+			end
+
+			local connections = {}
+
+			-- walk an existing tree without one giant frame (full scans have crashed the client)
+			local function sweep(root, fn)
+				task.spawn(function()
+					pcall(function()
+						for i, instance in ipairs(root:GetDescendants()) do
+							pcall(fn, instance)
+							if i % 500 == 0 then task.wait() end
+						end
+					end)
+				end)
+			end
+
+			local function watch(folder, fn)
+				sweep(folder, fn)
+				connections[#connections + 1] = folder.DescendantAdded:Connect(function(instance)
+					pcall(fn, instance)
+				end)
+			end
+
+			local watched = {}
+
+			local function tryFolders()
+				pcall(function()
+					local effects = workspace:FindFirstChild("Effects")
+					if effects and not watched[effects] then
+						watched[effects] = true
+						watch(effects, hide)
+					end
+
+					local npcs = workspace:FindFirstChild("NPCs")
+					if npcs and not watched[npcs] then
+						watched[npcs] = true
+						watch(npcs, quiet)
+					end
+				end)
+			end
+
+			tryFolders()
+			-- either folder made later (or remade): pick it up then
+			connections[#connections + 1] = workspace.ChildAdded:Connect(function(child)
+				if child.Name == "Effects" or child.Name == "NPCs" then tryFolders() end
+			end)
+
+			if g then g.__wyvernEffectHider = connections end
+			return true
+		end,
 	}
 end
 
@@ -13971,6 +14067,15 @@ local function createBossRotation()
 					end)
 
 					log(ok and "White world FPS boost on (applies to newly loaded parts too)." or ("White world FPS boost failed: " .. tostring(err)))
+				end
+
+				-- hide boss / skill effects, on by default (BossRotation.HideEffects = false to skip)
+				if bossRotation.HideEffects ~= false then
+					local ok, err = pcall(function()
+						Modules.Performance().EnableEffectHider()
+					end)
+
+					log(ok and "Effect hider on (workspace.Effects hidden, NPC particles off)." or ("Effect hider failed: " .. tostring(err)))
 				end
 
 				if getTravelMethod() == "Goro" then
