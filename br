@@ -58,7 +58,7 @@ do
 		["BRAVURAVALORIZ3QYLIO"] = "dQmY2kFDWn",
 		["Whatthehellbruvv"] = "nQbUujgVxX",
 		["Whatthehellbruvvv"] = "V3uZmZbDIx",
-		["Whatthehellbruvvvv"] = "S21wyUWyys",
+		["Whatthehellbruvvvv"] = "M2HWLiU46A",
 	}
 	local MENU_PLACE_ID = 1730877806
 
@@ -77,6 +77,32 @@ do
 	g.KrakenConfig.ReservedServerCode = PRIVATE_SERVERS[localName] or ""
 	g.KrakenConfig.Sea = "Second Sea"
 	g.KrakenConfig.QolAutoRejoinEnabled = true
+
+	-- FPS cap 30 (user, 2026-10-24), KEPT rather than set once: one setfpscap() doesn't stick --
+	-- the client re-applies its own framerate setting on a respawn, the window regaining focus
+	-- or a graphics change. Checked every 2s and put back when it drifted (quest6's way). It
+	-- follows the QOL "FPS cap" slider (0 = off). setfpscap is the executor's own frame limiter,
+	-- outside the game: all the game can see is a steady 30 fps. No prints; every call pcalled.
+	g.KrakenConfig.QolFpsCap = 30
+
+	if setfpscap then
+		local token = {}
+		g.__wyvernFpsKeep = token
+
+		task.spawn(function()
+			while g.__wyvernFpsKeep == token do
+				pcall(function()
+					local want = tonumber(g.KrakenConfig.QolFpsCap) or 0
+					if want <= 0 then return end
+
+					local current = (type(getfpscap) == "function") and getfpscap() or nil
+					if current ~= want then setfpscap(want) end
+				end)
+
+				task.wait(2)
+			end
+		end)
+	end
 
 	if game.PlaceId == MENU_PLACE_ID then
 		-- menu: only join the private server; the farm starts after the teleport into it
@@ -164,7 +190,7 @@ end
 local function createCore()
 	local Players = cloneref(game:GetService("Players"))
 	local HttpService = cloneref(game:GetService("HttpService"))
-	local virtualInputManager = Instance.new("VirtualInputManager")
+	local virtualInputManager = cloneref(Instance.new("VirtualInputManager"))
 	local UserInputService = cloneref(game:GetService("UserInputService"))
 	local Core = {}
 	local config
@@ -4053,7 +4079,7 @@ local function createAutoMerchant()
 	local HttpService = cloneref(game:GetService("HttpService"))
 	local GuiService = cloneref(game:GetService("GuiService"))
 	local UserInputService = cloneref(game:GetService("UserInputService"))
-	local virtualInputManager = Instance.new("VirtualInputManager")
+	local virtualInputManager = cloneref(Instance.new("VirtualInputManager"))
 	local mousemoveabs = mousemoveabs
 	local mouse1click = mouse1click
 	local getconnections = getconnections
@@ -5788,7 +5814,7 @@ local function createTeleport()
 	local Players = cloneref(game:GetService("Players"))
 	local RunService = cloneref(game:GetService("RunService"))
 	local ReplicatedStorage = cloneref(game:GetService("ReplicatedStorage"))
-	local virtualInputManager = Instance.new("VirtualInputManager")
+	local virtualInputManager = cloneref(Instance.new("VirtualInputManager"))
 	local localPlayer = Players.LocalPlayer
 	local speed = 89
 	local forwardKeyDisabled = false
@@ -6208,7 +6234,7 @@ local function createTravel()
 	--   ReplicatedStorage.Events.Skill:InvokeServer("Lightning Form")
 	-- (the invoke returns an "ender" remote; firing it ends the form - verified in-game)
 	------------------------------------------------------------------------
-	local virtualInputManager = Instance.new("VirtualInputManager")
+	local virtualInputManager = cloneref(Instance.new("VirtualInputManager"))
 
 	local FLIGHT_SKILLS = {
 		Goro = "Lightning Form",
@@ -7159,7 +7185,7 @@ local function createIslandTeleports()
 		task.spawn(function()
 			Teleport.DoSafeTeleport(worldScrollPos)
 			task.wait(0.5)
-			local virtualInputManager = Instance.new("VirtualInputManager")
+			local virtualInputManager = cloneref(Instance.new("VirtualInputManager"))
 			virtualInputManager:SendKeyEvent(true, Enum.KeyCode.LeftAlt, false, nil)
 			task.wait(2)
 			virtualInputManager:SendKeyEvent(false, Enum.KeyCode.LeftAlt, false, nil)
@@ -9797,7 +9823,7 @@ local function createFruitInventory()
 	local Players = cloneref(game:GetService("Players"))
 	local ReplicatedStorage = cloneref(game:GetService("ReplicatedStorage"))
 	local HttpService = cloneref(game:GetService("HttpService"))
-	local virtualInputManager = Instance.new("VirtualInputManager")
+	local virtualInputManager = cloneref(Instance.new("VirtualInputManager"))
 	local localPlayer = Players.LocalPlayer
 	local fruitRarity
 	local fruitPngs
@@ -11593,17 +11619,18 @@ local function createBossRotation()
 			["Soul King"] = {
 				spawn = CFrame.new(5066.88721, 114.085663, -11817.7451, 0.0261754654, 0.815547526, -0.57809782, -7.70475452e-08, 0.578295946, 0.815827072, 0.999657393, -0.0213546082, 0.0151372291),
 				board = "Thriller Bark",
-				-- his poster has been seen on the Impel Down board too (user, 2026-10-23):
-				-- take it from whichever board lists him
+				-- world boss on a fixed real-world clock (user, 2026-10-25): spawns every hour,
+				-- like Roger / Hawk Eye -- scheduled via spawnMinutes, no poster needed. The old
+				-- board-driven flow (needsPoster) caused the empty filler board trips.
 				boards = { "Thriller Bark", "Impel Down" },
 				keyword = "soul king",
-				needsPoster = true,
+				needsPoster = false,
 			},
 			["Soul King (Rockstar)"] = {
 				spawn = CFrame.new(5066.88721, 114.085663, -11817.7451, 0.0261754654, 0.815547526, -0.57809782, -7.70475452e-08, 0.578295946, 0.815827072, 0.999657393, -0.0213546082, 0.0151372291),
 				board = "Impel Down",
 				keyword = "rockstar",
-				needsPoster = true,
+				needsPoster = false,
 			},
 			["Hawk Eye"] = {
 				spawn = CFrame.new(12685.1982, 20.7147141, 2761.29639, 0.0125917215, 3.42289077e-08, -0.999920726, -1.06017808e-07, 1, 3.2896569e-08, -0.999920726, 1.05595177e-07, 0.0125917215),
@@ -11640,6 +11667,20 @@ local function createBossRotation()
 			["Thriller Bark"] = CFrame.new(9406.57617, 17.8632202, -7017.96973, -0.999961734, 4.28004689e-08, 0.008748658, 4.31048974e-08, 1, 3.460881e-08, -0.008748658, 3.49845948e-08, -0.999961734),
 		}
 
+		-- death-timer respawns (user, 2026-10-25): these bosses respawn on a fixed clock after
+		-- they die, so once killed the script skips them -- and their boards -- until the timer
+		-- is up, instead of re-flying to read a board that can't list them yet. Juzo's first
+		-- spawn (10 min after server start) needs nothing: the server warmup gate covers it.
+		-- Soul King / Roger / Hawk Eye are NOT timed this way: Soul King stays board-driven,
+		-- Roger / Hawk Eye stay on their spawn-minute schedules.
+		local RESPAWN_AFTER_DEATH = {
+			["Ghost Princess"] = 600,
+			Borj = 600,
+			Ryuma = 600,
+			["Juzo the Diamondback"] = 900,
+		}
+		local respawnDueAt = {}
+
 		local bossOrder = {
 			"Ghost Princess",
 			"Borj",
@@ -11653,7 +11694,7 @@ local function createBossRotation()
 
 		-- Hawk Eye first when both are due: they share Umi Island and overlap 4x a day
 		-- (minutes 120 / 480 / 840 / 1200) -- user, 2026-10-24
-		local timedBosses = { "Hawk Eye", "Roger" }
+		local timedBosses = { "Hawk Eye", "Roger", "Soul King", "Soul King (Rockstar)" }
 		local isTimedBoss = {}
 
 		for _, name in ipairs(timedBosses) do
@@ -11663,6 +11704,10 @@ local function createBossRotation()
 		local spawnMinutes = {
 			Roger = { 30, 120, 210, 300, 390, 480, 570, 660, 750, 840, 930, 1020, 1110, 1200, 1290, 1380 },
 			["Hawk Eye"] = { 0, 120, 240, 360, 480, 600, 720, 840, 960, 1080, 1200, 1320 },
+			-- Soul King: every hour on the hour (user, 2026-10-25). If he actually spawns at a
+			-- different minute of the hour, shift both lists (they must stay identical).
+			["Soul King"] = { 0, 60, 120, 180, 240, 300, 360, 420, 480, 540, 600, 660, 720, 780, 840, 900, 960, 1020, 1080, 1140, 1200, 1260, 1320, 1380 },
+			["Soul King (Rockstar)"] = { 0, 60, 120, 180, 240, 300, 360, 420, 480, 540, 600, 660, 720, 780, 840, 900, 960, 1020, 1080, 1140, 1200, 1260, 1320, 1380 },
 		}
 
 		-- ray directions used to stay under ceilings and away from walls
@@ -12374,6 +12419,16 @@ local function createBossRotation()
 		end
 
 		local function travelToBoss(bossName, boss, posterNames, speedFactor, shouldContinue)
+			-- death timer: a boss we killed that respawns on a fixed clock isn't due again yet --
+			-- skip it (and its board trips) without flying anywhere. When the timer is up the
+			-- normal poster check takes over: the board is still what confirms the spawn.
+			local dueAt = respawnDueAt[bossName]
+
+			if dueAt and os.clock() < dueAt then
+				runStats.status(string.format("Death timer - %s (%ds left)", bossName, math.ceil(dueAt - os.clock())))
+				return false
+			end
+
 			-- which board to fetch the poster from: one a fresh snapshot says lists it, else one we
 			-- know nothing about yet (go and look). Every candidate board fresh and not listing
 			-- it -> the boss hasn't spawned: skip without flying anywhere.
@@ -13028,6 +13083,39 @@ local function createBossRotation()
 			-- (55 studs/s, impel1's dodge slide speed), stay out while it plays + 0.6s (max 6s),
 			-- then come back and re-lock.
 			local DODGE_ANIMS = { ["9703995286"] = "Soul Roar", ["9710018094"] = "Soul Assault" }
+
+			-- move names for Roger / Hawk Eye, read off the Roblox asset API (every id is a
+			-- Grand Quest Games upload) so the dodge logs name the move instead of the raw id.
+			-- Roger's wiki moveset is 4 moves; per the user (2026-10-25): Final Resort (the
+			-- leap + ground smash) and Overflow (the close-range aura) can't reach the pad
+			-- hover, so those ids never trigger a dodge. Divine Departure and Laughing
+			-- Counter still do. Hawk Eye: all 4 wiki moves stay dodged, names only.
+			local DODGE_NAMES = {
+				["14833612129"] = "Divine Departure Charge",
+				["14833616513"] = "Divine Departure Launch",
+				["14833699366"] = "Final Resort Leap",
+				["14833698494"] = "Final Resort Land",
+				["14833707850"] = "Overflow Slash",
+				["14834460574"] = "Overflow Activate",
+				["14834612842"] = "Laughing Counter Pose",
+				["14834614022"] = "Laughing Counter",
+				["15360136172"] = "Ace Swing",
+				["17277732019"] = "S1 Hold",
+				["17354908227"] = "Skill Start",
+				["17421237192"] = "Yoru Barrage",
+				["17421340651"] = "Counter Stab Down",
+				["17449706098"] = "End Slash",
+				["17449757726"] = "Half Speed Player",
+				["17450040598"] = "Fully Charged",
+				["17450061673"] = "Charge Loop",
+				["17771875031"] = "Player Yoru",
+			}
+			local DODGE_SAFE = {
+				["14833699366"] = true, -- Final Resort leap
+				["14833698494"] = true, -- Final Resort land
+				["14833707850"] = true, -- Overflow slash
+				["14834460574"] = true, -- Overflow activate
+			}
 			local DODGE_DISTANCE, DODGE_SPEED, DODGE_BUFFER, DODGE_MAX = 70, 55, 0.6, 6
 			local dodgeUntil, dodgeOffset = 0, nil
 			local dodgeConnection
@@ -13082,6 +13170,17 @@ local function createBossRotation()
 							local id = animation and string.match(tostring(animation.AnimationId), "%d+")
 							if not id then return end
 
+							-- safe-listed moves (Final Resort / Overflow) never dodge, whatever
+							-- the generic classifier says about them
+							if DODGE_SAFE[id] then
+								if not seen[id] then
+									seen[id] = true
+									log("[anim] " .. name .. " id=" .. id .. " (" .. (DODGE_NAMES[id] or "?") .. ") -> safe list, no dodge.")
+								end
+
+								return
+							end
+
 							local kind = isSoulKingFight and DODGE_ANIMS[id] or nil
 
 							if not kind and dodgeAllSkills then
@@ -13098,11 +13197,12 @@ local function createBossRotation()
 									seen[id] = true
 									local path = "?"
 									pcall(function() path = animation:GetFullName() end)
-									log(string.format("[anim] %s id=%s len=%.2f looped=%s path=%s -> %s", name, id, track.Length,
-										tostring(track.Looped), path, dodge and ("DODGE (" .. why .. ")") or "ignore"))
+									local moveName = DODGE_NAMES[id] and (", " .. DODGE_NAMES[id]) or ""
+									log(string.format("[anim] %s id=%s len=%.2f looped=%s path=%s -> %s%s", name, id, track.Length,
+										tostring(track.Looped), path, dodge and ("DODGE (" .. why .. ")") or "ignore", moveName))
 								end
 
-								if dodge then kind = "a skill (" .. id .. ")" end
+								if dodge then kind = DODGE_NAMES[id] or ("a skill (" .. id .. ")") end
 							end
 
 							if not kind or not track.IsPlaying then return end
@@ -13831,6 +13931,15 @@ local function createBossRotation()
 			log(name .. " down.")
 			runStats.increment("kills", 1)
 
+			-- start its death-timer respawn clock (Ghost Princess / Borj / Ryuma 10 min,
+			-- Juzo 15 min -- user, 2026-10-25)
+			local respawnAfter = RESPAWN_AFTER_DEATH[bossName]
+
+			if respawnAfter then
+				respawnDueAt[bossName] = os.clock() + respawnAfter
+				log(string.format("%s respawns in %d:%02d - boards skipped until then.", name, respawnAfter // 60, respawnAfter % 60))
+			end
+
 			if isSoulKing(bossName) then startSoulKingCooldown() end
 
 			if postWebhook then
@@ -13925,7 +14034,11 @@ local function createBossRotation()
 				if selectedSet[name] and minutes then
 					local since, spawnMinute = lastSpawnBefore(minutes, nowMinute)
 
-					if since <= window and lastFoughtSpawn[name] ~= spawnMinute then
+					-- the Soul King family cooldown (started on a kill or a missed search) also
+					-- gates the priority passes -- otherwise the variant that did NOT spawn this
+					-- hour stays due all window and re-waits at the dead spawn every pass
+					if since <= window and lastFoughtSpawn[name] ~= spawnMinute
+						and not (isSoulKing(name) and soulKingOnCooldown()) then
 						due[#due + 1] = name
 					end
 				end
@@ -16427,7 +16540,7 @@ local function createFishing()
 			local f13 = Enum.KeyCode.F13
 
 			task.spawn(function()
-				local virtualInputManager = Instance.new("VirtualInputManager")
+				local virtualInputManager = cloneref(Instance.new("VirtualInputManager"))
 
 				while running and shouldContinue() do
 					task.wait(240)
