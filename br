@@ -13148,6 +13148,7 @@ local function createBossRotation()
 				if engageRoot then homePos = engageRoot.Position end
 			end
 			local padBlockedSince
+			local lastBlockedLog = 0
 
 			-- Soul King: dodge his two recorded skills by ID. Roger / Hawk Eye (dodgeAllSkills):
 			-- no IDs yet, so impel1's generic classifier decides (skillAnimation), and every
@@ -13419,7 +13420,13 @@ local function createBossRotation()
 							-- the hull), first slide sideways out from under it, away from the goal
 							if not padBlockedSince then
 								padBlockedSince = os.clock()
-								log("Hover path blocked - climbing around the obstacle.")
+
+								-- blocked->unblocked can flip-flop every frame near a hull: throttle
+								-- the log or it floods the file (238 lines in 17 min, 2026-10-25)
+								if os.clock() - lastBlockedLog > 5 then
+									lastBlockedLog = os.clock()
+									log("Hover path blocked - climbing around the obstacle.")
+								end
 							end
 
 							local up = Vector3.new(0, PAD_CLIMB * dt, 0)
@@ -13667,59 +13674,27 @@ local function createBossRotation()
 			local bossModel = findBoss(bossName)
 			local searchSeconds = bossSearchSeconds(bossName)
 			local searchDeadline = os.clock() + searchSeconds
-			local merchantInterrupt = false
 
 			if not bossModel and isTimedBoss[bossName] then
 				log(string.format("At %s's spawn - waiting up to %ds for it to arrive.", bossName, searchSeconds))
 				runStats.status("Waiting for " .. bossName .. " to arrive")
 			end
 
-			-- waiting at Umi for one world boss while the OTHER (selected) one is already there:
-			-- fight that one first instead of idling; this one stays due ("missing" isn't marked
-			-- fought) and is picked up right after
-			local function otherWorldBossHere()
-				if not isTimedBoss[bossName] then return nil end
-
-				for _, other in ipairs(timedBosses) do
-					local selectedBosses = bossRotation.SelectedBosses
-
-					if other ~= bossName and (type(selectedBosses) ~= "table" or selectedBosses[other] ~= false) and findBoss(other) then
-						return other
-					end
-				end
-
-				return nil
-			end
-
-			local switchTo
-
+			-- FOCUS (user, 2026-10-25): the search wait runs its course -- no mid-wait
+			-- preemption. The Traveling Merchant and other due bosses used to break out of
+			-- this loop (tonight it abandoned Hawk's spawn four times and ping-ponged between
+			-- Hawk and Soul King); now they're handled between attempts, by the lap's
+			-- checkMerchant and the next pass. A miss stays due and is retried.
 			while not bossModel and shouldContinue() and os.clock() < searchDeadline do
-				if merchantDue() then
-					merchantInterrupt = true
-					break
-				end
-
-				switchTo = otherWorldBossHere()
-				if switchTo then break end
-
 				task.wait(1)
 				bossModel = findBoss(bossName)
 			end
 
 			if resumeAntiAfk then resumeAntiAfk() end
 
-			if not bossModel and switchTo then
-				log(switchTo .. " is already here and " .. bossName .. " isn't yet - fighting " .. switchTo .. " first.")
-				return "missing"
-			end
-
 			-- "missing": never found, so a timed boss's spawn is NOT marked fought (attemptBoss)
 			-- and is tried again while its window is open
 			if not bossModel then
-				if merchantInterrupt then
-					log("Leaving " .. bossName .. "'s spawn early - Traveling Merchant is up.")
-					return "missing"
-				end
 				log(bossName .. " isn't up right now - moving on.")
 
 				if isSoulKing(bossName) then startSoulKingCooldown() end
