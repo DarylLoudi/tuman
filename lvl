@@ -1,0 +1,3690 @@
+-- quest5 = everything in one file: sea 1 (3978370137), the lobby (1730877806) and sea 2 (7465136166).
+-- Autoexec THIS file only (not quest4 as well, or sea 1 would be farmed twice).
+if game.PlaceId ~= 3978370137 and game.PlaceId ~= 1730877806 and game.PlaceId ~= 7465136166 then return end
+
+getgenv().Config = {
+    FPS = {
+        Cap = 20,
+        -- true = stop RENDERING the 3D world entirely (blank screen). Far cheaper
+        -- on CPU/GPU than a low cap, and it leaves the frame rate alone, so use it
+        -- with a higher Cap if a low cap makes the farm miss its hits.
+        Disable3D = false,
+        Boost = true,
+        EverythingWhite = true,
+    },
+
+    Accounts = {
+        -- Format: ['YourUsername'] = 'PS_Code',
+        ['Llinaratostape1'] = 'nQbUujgVxX',
+        ['Llinaratostape2']  = 'mjMJGhB1pa', 
+        ['Llinaratostape3'] = 'loyN1ZtL32',
+        ['Whatthehellbruvvvv'] = 'Zq0YWWCfLY'
+    },
+
+    AutoGet = {
+        BusoHaki = false,
+        Geppo = true,
+        GeppoPeli = 50000, -- peli needed before the Geppo trip (read from ReplicatedStorage.Stats<name>.Stats.Peli)
+        Rowboat = false,
+    },
+
+    -- Spends every available skill point into one stat as soon as it appears.
+    -- Stat is the ROW NAME under PlayerGui.Statistics.Main.Stats, which is not
+    -- always the label you see: the rows are Strength, DevilFruitMastery,
+    -- FightingStyleMastery, Stamina, Defense, GunMastery and SwordMastery.
+    -- A tier entry can carry its own Stat to override this while that tier is
+    -- active (the sea 2 zombie tier banks Defense, the wolf tier Strength).
+    AutoStat = {
+        Enabled = true,
+        Stat = "Strength",
+        Interval = 10, -- seconds between checks
+    },
+
+    Speed = {
+        Default = 45,
+        SpedUp = 45,
+        Sea2 = 75,     -- travel + straight-tween speed while in sea 2 (7465136166)
+        FishmanPath = 40, -- straight-tween speed for steps 3-5 of the Fishman path (a bit slower than Default)
+    },
+
+    -- Tensen's m1 loop and its two fight options (defaults are Tensen's)
+    Attack = {
+        -- "Tensen": combo 1-2-3-4, one hit every HitWait
+        -- "Combo5": the full 1-2-3-4-5 (5 is the finisher), Combo5HitWait between hits, then Combo5FinisherWait
+        Mode = "Combo5",
+        HitWait = 0.4,          -- Tensen mode: seconds between swings (quest2 measured the game's real gap at 0.516-0.56)
+        Combo5HitWait = 0.07,   -- Combo5 mode: seconds between hits (attack_func_done's HIT_DELAY)
+        Combo5FinisherWait = 1.5, -- Combo5 mode: rest after hit 5 before the next combo (attack_func_done's FINISHER_DELAY)
+        FeintOnBlock = false,   -- Fake M1 On Block: a blocking target only gets a swing with no damage (off: blocking targets are skipped)
+        FeintRetry = 1,         -- ...and is left alone this long before the next fake swing (impel1: 1, Tensen's slider minimum)
+        Shuffle = false,        -- M1 Back And Forth while fighting (impel1: off -- every hit from 5 studs in front of the target)
+        HitJitter = true,       -- impel1: a random 10-35 ms on top of HitWait, re-rolled every second
+    },
+
+
+    -- After the Fishman tier: once this level is reached the farm stops, leaves Fishman Island
+    -- through the gate, tweens to the World Scroll, grabs it (waits for it to spawn if it is
+    -- not there yet, it appears ~5 min after a server starts) and teleports to PlaceId.
+    -- "Grabbed" = the scroll shows up in your Inventory.
+    WorldScroll = {
+        Enabled = true,
+        Level = 325,
+        PlaceId = 1730877806,
+        -- Queued with queue_on_teleport so this script runs again in the new place.
+        -- Put the line you normally execute here. Set to false if you use autoexec.
+        RequeueCode = 'loadstring(readfile("quest5.lua"))()',
+    },
+
+    StopOnLVL = 676, -- sea 2 tier 2 runs to 675 (sea 1 hands over to the lobby / sea 2 at 325 long before)
+    OnStopLVL = "Kick", -- "Kick" or "Shutdown"
+
+    -- Waits out the loading screen before anything runs (see waitForLoadingScreen below).
+    Loading = {
+        Enabled = true,
+        GuiNames = { "LoadingGUI" }, -- measured with the recorder (ScreenGui, DisplayOrder 1001); names containing "load" also match
+    },
+}
+
+repeat task.wait() until game:IsLoaded()
+
+--------------------------------------------------------------------------------
+-- LOADING SCREEN WAIT
+--------------------------------------------------------------------------------
+-- game:IsLoaded() only means the engine finished replicating; the game's own loading
+-- screen can stay up much longer. There is no fixed delay and no timeout: it waits until ALL of
+-- these hold on two checks in a row (0.25s apart, only to ignore a one-frame flicker):
+--   1. the character exists (HumanoidRootPart + Humanoid)
+--   2. ReplicatedStorage.Stats<name> exists (the save data has replicated)
+--   3. the HUD's "Level N" label exists (what getPlayerLevel reads)
+--   4. the loading screen is gone: a ScreenGui in PlayerGui / ReplicatedFirst whose name is in
+--      Loading.GuiNames (default "LoadingGUI") or contains "load" still has a VISIBLE FULL-SCREEN
+--      FRAME. The game never disables or removes LoadingGUI, it only hides that frame (~11s in)
+local function waitForLoadingScreen()
+    local cfg = getgenv().Config.Loading or {}
+    if cfg.Enabled == false then return end
+    local plr = game:GetService("Players").LocalPlayer
+    local RS = game:GetService("ReplicatedStorage")
+    local RF = game:GetService("ReplicatedFirst")
+    local pg = plr:WaitForChild("PlayerGui")
+
+    local explicit = {}
+    for _, n in ipairs(cfg.GuiNames or {}) do explicit[string.lower(n)] = true end
+
+    local function visibleChain(obj, stopAt)
+        local cur = obj
+        while cur and cur ~= stopAt do
+            if cur:IsA("GuiObject") and not cur.Visible then return false end
+            cur = cur.Parent
+        end
+        return true
+    end
+
+    -- A visible full-screen frame. This is what the recorder measured on the game's LoadingGUI
+    -- (sea 1 and sea 2): the ScreenGui stays Enabled and parented the whole time, text goes
+    -- "Loading Player Info..." -> "Loading Data" -> "Loaded!", and the full-screen frame is
+    -- visible for ~11s and then hidden / faded. So "is it still there" = "is that frame still showing".
+    local function hasCover(gui)
+        local size = gui.AbsoluteSize
+        if size.X <= 0 or size.Y <= 0 then return false end
+        for _, d in ipairs(gui:GetDescendants()) do
+            if d:IsA("GuiObject") and d.BackgroundTransparency < 0.95 and visibleChain(d, gui) then
+                local s = d.AbsoluteSize
+                if s.X >= size.X * 0.9 and s.Y >= size.Y * 0.9 then return true end
+            end
+        end
+        return false
+    end
+
+    local function loadingShowing()
+        for _, root in ipairs({ pg, RF }) do
+            for _, gui in ipairs(root:GetChildren()) do
+                if gui:IsA("ScreenGui") and gui.Enabled then
+                    local lname = string.lower(gui.Name)
+                    if (explicit[lname] or string.find(lname, "load", 1, true)) and hasCover(gui) then
+                        return true
+                    end
+                end
+            end
+        end
+        -- (no scan of "load" elements inside other GUIs: Inventory has "Loadout" frames, which
+        -- the recorder flagged as a false positive)
+        return false
+    end
+
+    local function hudReady()
+        for _, d in ipairs(pg:GetDescendants()) do
+            if d:IsA("TextLabel") and string.match(d.Text, "^Level%s*%d+$") then return true end
+        end
+        return false
+    end
+
+    local function ready()
+        local char = plr.Character
+        if not (char and char:FindFirstChild("HumanoidRootPart") and char:FindFirstChildOfClass("Humanoid")) then return false end
+        if not RS:FindFirstChild("Stats" .. plr.Name) then return false end
+        if not hudReady() then return false end
+        return not loadingShowing()
+    end
+
+    local t0, streak = os.clock(), 0
+    while true do
+        if ready() then
+            streak = streak + 1
+            if streak >= 2 then
+                print(string.format("[quest] loading screen gone after %.1fs", os.clock() - t0))
+                return
+            end
+        else
+            streak = 0
+        end
+        task.wait(0.25)
+    end
+end
+
+
+--------------------------------------------------------------------------------
+-- CORE SERVICES
+--------------------------------------------------------------------------------
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local StarterGui = game:GetService("StarterGui")
+local UserInputService = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local VIM = VirtualInputManager
+local TeleportService = game:GetService("TeleportService")
+local HttpService = game:GetService("HttpService")
+
+local player = Players.LocalPlayer
+local targetPSCode = getgenv().Config.Accounts[player.Name]
+
+--------------------------------------------------------------------------------
+-- ANTI AFK (runs in both places, so the Idled kick never fires)
+--------------------------------------------------------------------------------
+local VirtualUser = game:GetService("VirtualUser")
+if getgenv().__QuestAntiAfk then pcall(function() getgenv().__QuestAntiAfk:Disconnect() end) end
+getgenv().__QuestAntiAfk = player.Idled:Connect(function()
+    VirtualUser:CaptureController()
+    VirtualUser:ClickButton2(Vector2.new())
+end)
+
+--------------------------------------------------------------------------------
+-- ANTI SIT (touching a chair / seat must never seat the character)
+--------------------------------------------------------------------------------
+-- 1) the Seated state is switched OFF on the humanoid, so a seat cannot seat us at all;
+-- 2) fallback: if we end up seated anyway, drop the seat weld, un-sit and jump out of it.
+local function antiSit(char)
+    local hum = char:WaitForChild("Humanoid", 10)
+    if not hum then return end
+    pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.Seated, false) end)
+
+    local function standUp()
+        if not hum.Sit and not hum.SeatPart then return end
+        pcall(function()
+            local seat = hum.SeatPart
+            local weld = seat and seat:FindFirstChild("SeatWeld")
+            if weld then weld:Destroy() end
+        end)
+        hum.Sit = false
+        hum.Jump = true
+        pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end)
+    end
+
+    hum:GetPropertyChangedSignal("Sit"):Connect(standUp)
+    hum.Seated:Connect(function(active) if active then standUp() end end)
+    standUp() -- already seated when the script started / the character spawned
+end
+player.CharacterAdded:Connect(antiSit)
+if player.Character then task.spawn(antiSit, player.Character) end
+
+local function notify(title, text, duration)
+    pcall(function()
+        StarterGui:SetCore("SendNotification", { Title = title, Text = text, Duration = duration or 3 })
+    end)
+end
+
+--------------------------------------------------------------------------------
+-- PLACE 2: 1730877806 (UI Remote & Multi-Method Dynamic Clicker)
+--------------------------------------------------------------------------------
+local function executeSecondPlaceSequence()
+    local playerGui = player:WaitForChild("PlayerGui")
+
+    local function isElementVisible(guiObject)
+        if not guiObject then return false end
+        local current = guiObject
+        while current and current:IsA("GuiObject") do
+            if not current.Visible then return false end
+            current = current.Parent
+        end
+        return current and current:IsA("LayerCollector") and current.Enabled or false
+    end
+
+    local function clickButton(btn)
+        if not btn then return false end
+        
+        if firesignal then
+            pcall(function() firesignal(btn.MouseButton1Click) end)
+            pcall(function() firesignal(btn.Activated) end)
+            pcall(function() firesignal(btn.MouseButton1Down) end)
+            pcall(function() firesignal(btn.MouseButton1Up) end)
+        end
+        if getconnections then
+            for _, conn in ipairs(getconnections(btn.MouseButton1Click)) do
+                pcall(function() conn:Fire() end)
+            end
+            for _, conn in ipairs(getconnections(btn.Activated)) do
+                pcall(function() conn:Fire() end)
+            end
+        end
+
+        pcall(function()
+            local absPos = btn.AbsolutePosition
+            local absSize = btn.AbsoluteSize
+            local centerX = absPos.X + (absSize.X / 2)
+            local centerY = absPos.Y + (absSize.Y / 2) + 36
+            
+            VirtualInputManager:SendMouseMoveEvent(centerX, centerY, game)
+            task.wait(0.05)
+            VirtualInputManager:SendMouseButtonEvent(centerX, centerY, 0, true, game, 0)
+            task.wait(0.05)
+            VirtualInputManager:SendMouseButtonEvent(centerX, centerY, 0, false, game, 0)
+        end)
+
+        return true
+    end
+
+    local function waitForAndFindVisibleButton(searchText, timeout)
+        local start = os.clock()
+        local searchLower = string.lower(searchText)
+        
+        while (os.clock() - start) < (timeout or 15) do
+            for _, desc in ipairs(playerGui:GetDescendants()) do
+                if isElementVisible(desc) then
+                    if desc:IsA("GuiButton") then
+                        if string.find(string.lower(desc.Name), searchLower) or (desc:IsA("TextButton") and string.find(string.lower(desc.Text), searchLower)) then
+                            return desc
+                        end
+                    elseif desc:IsA("TextLabel") and string.find(string.lower(desc.Text), searchLower) then
+                        local parentBtn = desc:FindFirstAncestorWhichIsA("GuiButton")
+                        if parentBtn and isElementVisible(parentBtn) then
+                            return parentBtn
+                        end
+                    end
+                end
+            end
+            task.wait(0.1)
+        end
+        return nil
+    end
+
+    task.wait(1)
+
+    if targetPSCode then
+        print("[SYSTEM] Attempting to join Private Server code: " .. targetPSCode)
+        task.spawn(function()
+            local reservedEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("reserved")
+            pcall(function()
+                reservedEvent:InvokeServer(targetPSCode)
+            end)
+        end)
+    end
+
+    local regularBtn = waitForAndFindVisibleButton("regular", 15)
+    if regularBtn then
+        task.wait(0.4)
+        clickButton(regularBtn)
+    end
+
+    local secondSeaBtn = waitForAndFindVisibleButton("second", 15)
+    if secondSeaBtn then
+        task.wait(0.4)
+        clickButton(secondSeaBtn)
+    end
+end
+
+--------------------------------------------------------------------------------
+-- PLACE 1: 3978370137 (Main Game Auto Farm)
+--------------------------------------------------------------------------------
+local function executeFirstPlaceSequence()
+    -- KEPT, not set once. A single setfpscap() call does not stick: the cap goes
+    -- back up after a few seconds/minutes whenever the client re-applies its own
+    -- framerate setting (the game's settings, a respawn, the window regaining
+    -- focus, a graphics change). So the cap is checked every 2s and put back
+    -- whenever it has drifted. A newer run replaces an older loop (token).
+    if setfpscap and getgenv().Config.FPS.Cap then
+        local token = {}
+        getgenv().__Quest2FpsKeep = token
+        task.spawn(function()
+            while getgenv().__Quest2FpsKeep == token do
+                local want = getgenv().Config.FPS.Cap
+                pcall(function()
+                    local cur = (type(getfpscap) == "function") and getfpscap() or nil
+                    if cur ~= want then setfpscap(want) end
+                end)
+                if getgenv().Config.FPS.Disable3D then
+                    pcall(function() RunService:Set3dRenderingEnabled(false) end)
+                end
+                task.wait(2)
+            end
+        end)
+    end
+
+    if getgenv().Config.FPS.Boost then
+        local terrain = Workspace:FindFirstChildOfClass("Terrain")
+        if terrain then
+            terrain.WaterWaveSize = 0
+            terrain.WaterWaveSpeed = 0
+            terrain.WaterReflectance = 0
+            terrain.WaterTransparency = 0
+        end
+        game:GetService("Lighting").GlobalShadows = false
+        game:GetService("Lighting").FogEnd = 9e9
+
+        for _, desc in ipairs(Workspace:GetDescendants()) do
+            if desc:IsA("BasePart") then
+                desc.Material = Enum.Material.Plastic
+                desc.Reflectance = 0
+                if getgenv().Config.FPS.EverythingWhite then desc.Color = Color3.new(1, 1, 1) end
+            elseif desc:IsA("Decal") or desc:IsA("Texture") then
+                desc.Transparency = 1
+            end
+        end
+    end
+
+
+    -- Sea 2 travels at its own (faster) Speed.Sea2; sea 1 keeps the quiet default.
+    -- Used only for quest travel and the straight tweens.
+    local TRAVEL_SPEED = (game.PlaceId == 7465136166)
+        and (getgenv().Config.Speed.Sea2 or getgenv().Config.Speed.Default)
+        or getgenv().Config.Speed.Default
+    local HIP_HEIGHT = 3.15
+    local DESIRED_MIN_Y = 1.0
+    local FINAL_APPROACH_RADIUS = 10
+
+    -- HOVER SETTINGS (the attack and its tuning live further down, by the m1 loop)
+    local HOVER_OFFSET = Vector3.new(0, 9, 0)
+    local BASE_SPEED = 45
+    -- quest5's hover tuning: one speed in every direction, 12x the distance, 8..BASE_SPEED studs/s
+    local function hoverVelocity(to)
+        return to.Unit * math.min(BASE_SPEED, math.max(to.Magnitude * 12, 8))
+    end
+    local ARRIVE_THRESHOLD = 2.5
+
+
+    local isRunning = true
+    -- one copy at a time: executing quest6 again stops this one (every loop runs on isRunning),
+    -- otherwise two hover engines snap between different mobs and the m1 loops double up
+    local runToken = {}
+    getgenv().__Quest6Run = runToken
+    task.spawn(function()
+        while isRunning do
+            task.wait(0.25)
+            if getgenv().__Quest6Run ~= runToken then
+                isRunning = false
+                print("[quest6] a newer quest6 was executed - this copy stopped")
+            end
+        end
+    end)
+    local hasQuest = false
+    local isTraveling = false
+    local normalTweening = false   -- true only inside safeMoveTo (the normal tween): geppo is cast then
+    local aggroedTargets = {}
+    local activeTargetHrp = nil
+    -- FightSpot tiers: while set, the hover engine holds this point instead of following a mob
+    local fixedHoverPos = nil
+    local settlingForSpawn = false   -- true while we stand down from hover to set spawn
+    local questTakenAt = 0
+    local questMissCount = 0
+
+    -- Session tracking state for spawn setting & Gravito waypoint routing
+    local spawnedTiers = {}
+    local gravitoNeedsWaypoint = true
+    local diedWhileFarming = false
+
+    local function hookDeath(char)
+        local hum = char:WaitForChild("Humanoid", 10)
+        if hum then
+            hum.Died:Connect(function()
+                gravitoNeedsWaypoint = true
+                diedWhileFarming = true
+            end)
+        end
+    end
+
+    player.CharacterAdded:Connect(function(newChar)
+        gravitoNeedsWaypoint = true
+        -- spawnedTiers is NOT reset here any more: the Robo spawn step runs once per
+        -- session (a script run / rejoin), not again after every death -- the spawn
+        -- point stays set to Robo across respawns.
+        hookDeath(newChar)
+    end)
+    if player.Character then task.spawn(hookDeath, player.Character) end
+
+    local SEA1_TIERS = {
+        { MinLevel = 0, MaxLevel = 9, QuestName = "Help Daph", NpcPosition = Vector3.new(-578.6, 5.9, -3431.5), TargetMobName = "bandit", ExcludeKeyword = "boss", MaxAggro = 4 },
+        { MinLevel = 10, MaxLevel = 19, QuestName = "Help Noah", NpcPosition = Vector3.new(-1710.2, 4.1, -3377.1), TargetMobName = "desert bandit", MaxAggro = 5,
+          UseLegacyTween = true },   -- this tier keeps the OLD safeMoveTo, not the BossRotation travel,
+        -- NoNoclip: this tier is farmed with collisions left ON, so the
+        -- character walks and hovers as a normal player instead of passing
+        -- through geometry. Honoured by safeMoveTo, straightLineTween and the
+        -- farm-loop noclip connection alike.
+        { MinLevel = 20, MaxLevel = 29, QuestName = "Help Robert", NpcPosition = Vector3.new(-1445.1, 10.2, -5102.7), NoNoclip = true, TargetMobName = "corrupt marine", MaxAggro = 6,
+          -- Fight the marine carrying the rocket launcher FIRST (measured: only that
+          -- one has a bazooka in it: a BazookaBack model, a BazookaMiddle joint in the
+          -- hand, a Rocket mesh -- any of them, searched recursively, since the
+          -- weapon moves from his back to his hand), once everything is aggroed; the
+          -- others are fought normally after it dies.
+          PriorityNames = { "BazookaBack", "BazookaMiddle", "Rocket" } },
+        { MinLevel = 30, MaxLevel = 39, QuestName = "Help Zen", NpcPosition = Vector3.new(-3172.5, 12.5, -5226.9), TargetMobName = "zou inhabitant", MaxAggro = 5 },
+        { MinLevel = 40, MaxLevel = 164, QuestName = "Help Rice", NpcPosition = Vector3.new(-2968.3, 6.6, -6697.6), RoboPosition = Vector3.new(-2978.8, 52.6, -6796.6),
+          -- Robo is inside a room: go to the front of its doorway first, then travel
+          -- in through the door (the travel never noclips, so it cannot come in over the roof).
+          RoboDoorway = Vector3.new(-2971.2, 49.8, -6748.1), TargetMobName = "krieg pirate", ExcludeKeyword = "krieg", MaxAggro = 8 },
+        { MinLevel = 165, MaxLevel = 189, QuestName = "Help Miska", NpcPosition = Vector3.new(185.2, 41.5, -11658.6), Waypoint1 = Vector3.new(158.8, 41.4, -11496.4), Waypoint2 = Vector3.new(157.9, 55.3, -11679.6), RoboPosition = Vector3.new(262.1, 7.6, -11480.5), TargetMobName = "gravito's undermen", MaxAggro = 6 },
+        {
+            MinLevel = 190, MaxLevel = 325, QuestName = "Help becky",
+            NpcPosition = Vector3.new(7731.1, -2176.1, -17222.7),
+            RoboPosition = Vector3.new(7973.8, -2152.8, -17074.9),
+            -- one-time route to Fishman Island Robo (runs once per account, remembered in a file)
+            PathToRobo = {
+                { Pos = Vector3.new(1835.9, 4.1, -12174.5), Mode = "safe" },                      -- fishman cave
+                { Pos = Vector3.new(1836.0, 8.8, -12191.8), Mode = "straight" },                        -- surface before sinking
+                { Pos = Vector3.new(1836.3, -93.9, -12195.1), Mode = "straight" },                -- done sinking
+                { Pos = Vector3.new(1838.9, -93.7, -12325.9), Mode = "straight" },                -- end of the maze
+                { Pos = Vector3.new(1793.3, -93.9, -12327.6), Mode = "straight", Wait = 7 },     -- gate (wait 7s before Robo)
+            },
+            TargetMobName = "fishman karate user", MaxAggro = 5
+        }
+    }
+
+    -- SEA 2 (PlaceId 7465136166). Collisions are left to the default: noclip is on, no NoNoclip flag.
+    local SEA2_TIERS = {
+        -- Tier 1: Robo (set spawn, once per session) -> normal travel to the quest NPC.
+        { MinLevel = 325, MaxLevel = 425, QuestName = "Help Poro",
+          NpcPosition = Vector3.new(10310.0, 56.9, -7733.2),
+          RoboPosition = Vector3.new(9384.4, 15.9, -7007.6),
+          TargetMobName = "zombie", MaxAggro = 10,
+          Stat = "Defense",             -- AutoStat banks every point into Defense for this tier
+          RespawnTravelToMob = true,    -- after a death: normal travel tween to the mobs first, attack hover once near
+          FightSpot = Vector3.new(10470.4, 55.9, -7793.5), -- all pulled: straight tween here (+ hover height) and kill them from it
+          ReturnStraightToNpc = true,   -- quest done: straight tween back to the quest NPC (not the normal travel)
+          LeaveOnTierChange = true },   -- once the level passes the tier: back to the NPC, quit, next tier
+        -- Tier 2: doorway first -> straight tween in to Robo (set spawn, once per session)
+        -- -> straight tween back out to the doorway -> normal travel to PJ.
+        { MinLevel = 426, MaxLevel = 675, QuestName = "Help PJ",
+          NpcPosition = Vector3.new(7121.8, 56.3, 10555.0),
+          RoboDoorway = Vector3.new(8579.1, 65.8, 10450.1),
+          RoboPosition = Vector3.new(8495.2, 69.0, 10548.6),
+          TargetMobName = "crazy wolf", MaxAggro = 6,
+          Stat = "Strength",            -- back to Strength from this tier on (spelled out so the switch is visible)
+          HoverHeight = 12,             -- hover 12 studs over the mob (other tiers: the default 9)
+          FaceDown = true,              -- lie flat, belly to the mob below, while fighting (not upright)
+          RespawnTravelToMob = true,    -- after a death: normal travel tween to the mobs first, attack hover once near
+          FinishStraightRadius = 12,    -- PJ stands under a tree: normal travel stops 12 studs short (horizontally)...
+          ApproachWaypoint = Vector3.new(7124.7, 146.5, 10516.5),  -- ...then straight tween here first, then to PJ
+          ReturnWaypoint = Vector3.new(7133.2, 22.0, 10695.1),     -- kill > quest only (not Robo > quest): straight tween here first
+          ReturnWaypointAfterTake = true, -- and after taking the quest: straight tween to ReturnWaypoint first, then to the wolves
+          LeaveOnTierChange = true },
+    }
+
+    local QUEST_CONFIG = (game.PlaceId == 7465136166) and SEA2_TIERS or SEA1_TIERS
+    local activeQuestConfig = QUEST_CONFIG[1]
+
+    -- True while the current tier is configured to keep its collisions. Every
+    -- noclip site checks this, so one flag on the config turns noclip off for
+    -- the whole tier rather than needing a special case in each place.
+    local function noclipAllowed()
+        return not (activeQuestConfig and activeQuestConfig.NoNoclip)
+    end
+
+    -- Puts collisions back, for when noclip has just been turned off or was
+    -- never wanted. Matches what stopHoverPhysics already does.
+    local function restoreCollisions(char)
+        char = char or player.Character
+        if not char then return end
+        for _, part in ipairs(char:GetDescendants()) do
+            if part:IsA("BasePart") then part.CanCollide = true end
+        end
+    end
+
+    local function stopHoverPhysics()
+        pcall(function()
+            local char = player.Character
+            if char and char:FindFirstChild("HumanoidRootPart") then
+                local hrp = char.HumanoidRootPart
+                hrp.Anchored = false
+                local bv = hrp:FindFirstChild("HoverBodyVelocity")
+                if bv then bv:Destroy() end
+                for _, part in ipairs(char:GetDescendants()) do
+                    if part:IsA("BasePart") then part.CanCollide = true end
+                end
+            end
+        end)
+    end
+
+    local function getPlayerLevel()
+        local level = 0
+        pcall(function()
+            local playerGui = player:FindFirstChild("PlayerGui")
+            if playerGui then
+                for _, desc in ipairs(playerGui:GetDescendants()) do
+                    if desc:IsA("TextLabel") and string.match(desc.Text, "^Level%s*%d+$") then
+                        level = tonumber(string.match(desc.Text, "%d+"))
+                        break
+                    end
+                end
+            end
+        end)
+        return level > 0 and level or 40
+    end
+
+    -- Reads the real ownership flag: Skills.<name> is a BoolValue (true = owned).
+    -- Geppo's trainer is "skyWalkTrainer", so its flag is Skills.skyWalk, NOT a "geppo" key.
+    -- Looked up under the player's Stats folder in ReplicatedStorage first (where Peli lives),
+    -- then under the player itself, so it works wherever the Skills folder sits.
+    local SKILL_FLAG = { geppo = "skyWalk" }
+
+    local function checkSkillOwned(skillName)
+        local flagName = SKILL_FLAG[string.lower(skillName)] or skillName
+        local roots = {
+            ReplicatedStorage:FindFirstChild("Stats" .. player.Name),
+            player,
+        }
+        for _, root in ipairs(roots) do
+            if root then
+                local skills = root:FindFirstChild("Skills", true)
+                local flag = skills and skills:FindFirstChild(flagName)
+                if flag and flag:IsA("BoolValue") then
+                    return flag.Value == true
+                end
+            end
+        end
+        return false
+    end
+
+    -- GEPPO OWNERSHIP. checkSkillOwned is now a cheap value read, so a "no" is cached for
+    -- GEPPO_RECHECK seconds and a "yes" is kept for good.
+    local GEPPO_RECHECK = 15
+    local geppoOwnedCached = false
+    local geppoLastOwnedCheck = -1e9
+    local function geppoOwned(force)
+        if geppoOwnedCached then return true end
+        if not force and tick() - geppoLastOwnedCheck < GEPPO_RECHECK then return false end
+        geppoLastOwnedCheck = tick()
+        if checkSkillOwned("geppo") then geppoOwnedCached = true end
+        return geppoOwnedCached
+    end
+
+    -- The tier for a level. The Fishman tier (PathToRobo) is held back while Geppo is wanted
+    -- but not owned: it keeps farming Gravito until Geppo is bought AND the level is reached.
+    local function getConfigForLevel(level)
+        -- below the first tier (e.g. an unreadable level in sea 2) -> tier 1; above the last -> the last tier
+        local found = (level < QUEST_CONFIG[1].MinLevel) and QUEST_CONFIG[1] or QUEST_CONFIG[#QUEST_CONFIG]
+        for _, q in ipairs(QUEST_CONFIG) do
+            if level >= q.MinLevel and level <= q.MaxLevel then found = q break end
+        end
+        if found.PathToRobo and getgenv().Config.AutoGet.Geppo and not geppoOwned() then
+            for _, g in ipairs(QUEST_CONFIG) do
+                if g.QuestName == "Help Miska" then return g end
+            end
+        end
+        return found
+    end
+
+    UserInputService.InputBegan:Connect(function(input, gameProcessed)
+        if gameProcessed then return end
+        if input.KeyCode == Enum.KeyCode.X then
+            isRunning = false; hasQuest = false; isTraveling = false
+            stopHoverPhysics()
+            notify("Auto Farm", "Stopped via Kill Switch.", 3)
+        end
+    end)
+
+    task.spawn(function()
+        while isRunning do
+            task.wait(5)
+            if getPlayerLevel() >= getgenv().Config.StopOnLVL then
+                isRunning = false
+                if getgenv().Config.OnStopLVL == "Kick" then
+                    player:Kick("Auto-Farm Stopped: Reached Target Level " .. getgenv().Config.StopOnLVL)
+                elseif getgenv().Config.OnStopLVL == "Shutdown" then
+                    game:Shutdown()
+                end
+            end
+        end
+    end)
+
+    --------------------------------------------------------------------------
+    -- AUTO STAT POINTS
+    --------------------------------------------------------------------------
+    -- Pressing "+" on a stat is a TextButton named Add inside its row:
+    --   PlayerGui.Statistics.Main.Stats.<Stat>.Add        (TextButton, "+")
+    --   PlayerGui.Statistics.Main.Stats.<Stat>.Amount     (current value)
+    --   PlayerGui.Statistics.Main.TopOptions.AvailableSP  ("Skill Points: 12")
+    --
+    -- Rather than guess at what Events.SkillPoint expects, this fires the
+    -- game's OWN Activated handler, so the client sends exactly the request it
+    -- would send if you clicked. Verified live: one fire took Strength 75 -> 76
+    -- and the counter 12 -> 11.
+    --
+    -- Verified too that it works with the panel CLOSED (Statistics.Enabled =
+    -- false), and that AvailableSP still updates while closed -- so this never
+    -- has to open the UI or interrupt farming.
+    local function availablePoints()
+        local ok, n = pcall(function()
+            local gui = player.PlayerGui:FindFirstChild("Statistics")
+            local main = gui and gui:FindFirstChild("Main")
+            local top = main and main:FindFirstChild("TopOptions")
+            local label = top and top:FindFirstChild("AvailableSP")
+            if not label then return nil end
+            return tonumber(string.match(label.Text, "%d+"))
+        end)
+        return ok and n or nil
+    end
+
+    local function pressAddOn(statName)
+        local ok = pcall(function()
+            local gui = player.PlayerGui:FindFirstChild("Statistics")
+            local main = gui and gui:FindFirstChild("Main")
+            local rows = main and main:FindFirstChild("Stats")
+            local row = rows and rows:FindFirstChild(statName)
+            local btn = row and row:FindFirstChild("Add")
+            if not btn then error("no Add button on " .. tostring(statName)) end
+
+            local conns = getconnections and getconnections(btn.Activated)
+            if not conns or #conns == 0 then error("no Activated handler") end
+            for _, c in ipairs(conns) do c:Fire() end
+        end)
+        return ok
+    end
+
+    task.spawn(function()
+        local cfg = getgenv().Config.AutoStat
+        if not (cfg and cfg.Enabled) then return end
+
+        if not getconnections then
+            notify("Auto Stat", "Executor has no getconnections - auto stat disabled.", 6)
+            return
+        end
+
+        local warnedMissing = false
+
+        while isRunning do
+            task.wait(cfg.Interval or 10)
+
+            local points = availablePoints()
+            if not points then
+                if not warnedMissing then
+                    warnedMissing = true
+                    notify("Auto Stat", "Statistics panel not readable yet - will keep trying.", 4)
+                end
+            elseif points > 0 then
+                warnedMissing = false
+                local spent = 0
+                -- The active tier decides where points go (tier Stat override,
+                -- Config.AutoStat.Stat as the fallback). Decided by LEVEL, not by
+                -- the farm loop's current tier, so it is right even mid-transition;
+                -- re-read every check, so crossing 425 flips Defense -> Strength
+                -- within one interval.
+                local tier = getConfigForLevel(getPlayerLevel())
+                local stat = (tier and tier.Stat) or cfg.Stat
+
+                -- One point at a time, re-reading the counter after each. If it
+                -- does not go down the press was refused, so stop rather than
+                -- spin on a button that is not taking.
+                while isRunning and points > 0 do
+                    if not pressAddOn(stat) then break end
+                    task.wait(0.35)
+
+                    local after = availablePoints()
+                    if not after or after >= points then break end
+
+                    points = after
+                    spent = spent + 1
+                end
+
+                if spent > 0 then
+                    notify("Auto Stat", string.format("Put %d point%s into %s.",
+                        spent, spent == 1 and "" or "s", stat), 3)
+                end
+            end
+        end
+    end)
+    --------------------------------------------------------------------------
+    -- BOSSROTATION'S TRAVEL (travelTo), ported from BossRotation.lua
+    --------------------------------------------------------------------------
+    -- Ground travel: a BodyVelocity with Y exactly zero for the horizontal, the
+    -- root CFrame translated to follow the ground (probing underfoot and 16
+    -- studs ahead), a geppo climb over steps/cliffs, ceiling and overhang
+    -- handling with sidestep detours, and NO noclip -- it never writes
+    -- CanCollide. safeMoveTo (below) uses it for normal moves; the underwater
+    -- Fishman moves (ignoreYLimit) keep the old straight-line code, because this
+    -- one rides the sea surface and cannot go under it.
+    -- Speed comes from Config.Speed.Default, not BossRotation's own number.
+    local TWN = {}
+    do
+        local RS = ReplicatedStorage
+        local T = {}
+        local function log(fmt, ...)
+            local ok, msg = pcall(string.format, "[TWN] " .. fmt, ...)
+            print(ok and msg or ("[TWN] " .. tostring(fmt)))
+        end
+        local function parts()
+            local char = player.Character
+            if not char then return nil end
+            local hrp = char:FindFirstChild("HumanoidRootPart")
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if not hrp or not hum then return nil end
+            return char, hrp, hum
+        end
+
+        local SPEED = TRAVEL_SPEED
+        local BV_MAXFORCE = 1e9
+        local BV_P = 1250
+        local BG_P = 200000
+        local BG_D = 1000
+        local BG_MAXTORQUE = 1e9
+        local LOOKAHEAD = 16
+        local PROBE_UP = 260       -- must see cliffs far taller than the character
+        local PROBE_DOWN = 550
+        local FOOT_CLEARANCE = 0.15
+        -- Only used when no Ocean part is loaded (e.g. the script was started inside Fishman Island).
+        -- The real surface is about 3.1; the old -2.70 made the travel ride ~6 studs too low, i.e. underwater.
+        local SEA_LEVEL_FALLBACK = 3.1
+        local WATER_RIDE = 1.0
+        local WATER_GEPPO_EVERY = 8
+        local RISE_ALPHA = 0.55
+        local FALL_ALPHA = 0.14
+        local SNAP_RISE = 9
+        local MAX_VERT_SPEED = SPEED
+        -- Hard cap on FALLING, separate from MAX_VERT_SPEED so going down can be
+        -- faster than going up (BossRotation1's T.MAX_DESCEND_SPEED = 150). The
+        -- old symmetric cap turned every drop into a float: 45 studs/s down.
+        -- Trade-off, same as BossRotation: the teleport check measures distance
+        -- per sample, so 150 down CAN trip "TP Check" after a long drop.
+        local MAX_DESCEND_SPEED = 150
+        local CLIMB_THRESHOLD = 12
+        local CLIMB_RISE_SPEED = 65
+        local CLIMB_FORWARD_SPEED = 10
+        local CLIMB_CLEAR = 8
+        local MAX_CLIMB_TIME = 12
+        local CLIMB_ESCALATE = 25
+        local CLIMB_BACKOFF_SPEED = 20
+        local CLIMB_BACKOFF_MAX = 20
+        local MAX_CLIMB_TRIES = 6
+        local HEAD_PROBE = 16
+        local HEAD_MARGIN = 1.2
+        local HEAD_BLOCKED = 1.5
+        local CEILING_STALL = 1.5
+        local CEILING_RISE = 1.0
+        local DETOUR_BASE = 45
+        local DETOUR_TIME = 7
+        local MAX_DETOURS = 8
+        local GEPPO_NAME = "Sky Walk2"
+        local GEPPO_CLIMB_INTERVAL = 0.25
+        local STALL_DIST = 2.0
+        local STALL_TIME = 1.2
+        T.STALL_SAME_SPOT = 12
+        T.FRONT_PROBE = 8
+        T.FRONT_RADIUS = 1.5
+        T.FRONT_STEP = 3
+        T.FRONT_MAX = 60
+        -- 5.5, not 3: the NPC (or Robo) is a solid body and, with no noclip, the
+        -- character stops about 4 studs short of the point. At 3 it could never
+        -- "arrive", read that as a stall, and geppo-climbed in circles (seen live).
+        -- The exact spot is closed by the short glide in safeMoveTo.
+        local ARRIVE_RADIUS = 5.5
+        local SLOW_RADIUS = 45
+        local MIN_SPEED = 12
+        local TIMEOUT_GRACE = 20
+        local TIMEOUT_SLACK = 1.6
+        local TIMEOUT_MIN = 30
+
+        -- Geppo is a skill you have to own; casting it without it just fails
+        -- quietly. checkSkillOwned is a cheap BoolValue read now, so this is read
+        -- fresh every time -- no cache, so a purchase takes effect immediately.
+        local function geppoOn()
+            local ok, owned = pcall(checkSkillOwned, "geppo")
+            return ok and owned == true
+        end
+        local GEPPO_ENABLED_FN = geppoOn
+
+--------------------------------------------------------------------------------
+-- GROUND / SEA
+--------------------------------------------------------------------------------
+-- Ocean parts whose top is below this are Fishman Island's own water (Y about -2100), not the
+-- sea. Running the script from INSIDE Fishman Island used to store that depth as the sea level
+-- for good, and after the gate teleport the travel then rode (or sank to) that depth instead of
+-- the surface.
+local SEA_MIN_TOP = -100
+local function detectSeaLevel()
+    local ocean = Workspace:FindFirstChild("Ocean")
+    local top = nil
+    if ocean then
+        for _, o in ipairs(ocean:GetDescendants()) do
+            if o:IsA("BasePart") then
+                local y = o.Position.Y + o.Size.Y * 0.5
+                if y > SEA_MIN_TOP and (not top or y > top) then top = y end
+            end
+        end
+    end
+    return top or SEA_LEVEL_FALLBACK, top ~= nil   -- value, and whether it came from real Ocean parts
+end
+local SEA_LEVEL, seaFromOcean = detectSeaLevel()
+print(string.format("[TWN] sea level %.2f (%s)", SEA_LEVEL, seaFromOcean and "from the Ocean parts" or "fallback - no Ocean parts loaded"))
+
+-- Re-read it now and then (throttled: it walks every Ocean part), so a value taken at load
+-- never sticks. Called at the start of every travel.
+local lastSeaScan = os.clock()
+local function refreshSeaLevel()
+    -- while the value is only the fallback, look again on EVERY travel (cheap: nothing to walk);
+    -- once it comes from real Ocean parts, every 20s is enough
+    if seaFromOcean and os.clock() - lastSeaScan < 20 then return end
+    lastSeaScan = os.clock()
+    local fresh, found = detectSeaLevel()
+    if math.abs(fresh - SEA_LEVEL) > 0.01 or found ~= seaFromOcean then
+        print(string.format("[TWN] sea level %.2f -> %.2f (%s)", SEA_LEVEL, fresh, found and "from the Ocean parts" or "fallback"))
+    end
+    SEA_LEVEL, seaFromOcean = fresh, found
+end
+
+-- A CanCollide union with ForceField material sits above some arenas and
+-- produces nonsense ground readings, so it is skipped and the search carries on
+-- downward rather than standing on it.
+local SKIP_MATERIAL = {[Enum.Material.ForceField] = true}
+
+local rayParams = RaycastParams.new()
+rayParams.FilterType = Enum.RaycastFilterType.Exclude
+pcall(function() rayParams.RespectCanCollide = true end)
+
+local function refreshFilter()
+    rayParams.FilterDescendantsInstances = {player.Character}
+end
+
+local function surfaceY(pos)
+    local originY = pos.Y + PROBE_UP
+    local floorY = originY - PROBE_DOWN
+    for _ = 1, 6 do
+        local length = originY - floorY
+        if length <= 0 then return nil end
+        local hit = Workspace:Raycast(
+            Vector3.new(pos.X, originY, pos.Z), Vector3.new(0, -length, 0), rayParams)
+        if not hit then return nil end
+        if not SKIP_MATERIAL[hit.Material] then return hit.Position.Y end
+        originY = hit.Position.Y - 0.5
+    end
+    return nil
+end
+
+-- Clear space above the HEAD, in studs, or math.huge when there is nothing
+-- overhead. Measured from the head rather than the root because the head is
+-- what the game's own check looks at.
+local function headroom(char, root)
+    local head = char and char:FindFirstChild("Head")
+    local from = head and head.Position or (root.Position + Vector3.new(0, 2, 0))
+    local hit = Workspace:Raycast(from, Vector3.new(0, HEAD_PROBE, 0), rayParams)
+    if not hit then return math.huge end
+    return math.max(0, hit.Distance - HEAD_MARGIN)
+end
+
+-- The lowest ROOT height at which nothing blocks us T.FRONT_PROBE studs ahead,
+-- or nil when nothing blocks us at all.
+--
+-- Sweeps a sphere forward at rising heights. A sphere because the thing this
+-- was written for is a spiked iron fence: a thin ray, down or forward, slips
+-- between the bars and reports nothing there, while the body cannot pass.
+local function obstacleTop(pos, dir)
+    if not dir or dir.Magnitude < 0.01 then return nil end
+    local sweep = dir.Unit * T.FRONT_PROBE
+    for h = 0, T.FRONT_MAX, T.FRONT_STEP do
+        local from = pos + Vector3.new(0, h, 0)
+        local ok, hit = pcall(function()
+            return Workspace:Spherecast(from, T.FRONT_RADIUS, sweep, rayParams)
+        end)
+        if not ok then return nil end   -- no Spherecast here: fall back
+        if not hit then
+            return (h == 0) and nil or from.Y
+        end
+    end
+    return pos.Y + T.FRONT_MAX
+end
+
+--------------------------------------------------------------------------------
+-- MOVERS
+--------------------------------------------------------------------------------
+-- Sweeps movers that could actually hold the character, not every mover there
+-- is. An AlignPosition left behind by something else once pinned the character
+-- solid and survived aborts that only destroyed their own, hence the sweep --
+-- but destroying indiscriminately is its own bug:
+--
+-- THE GAME'S OWN CLIMB SYSTEM lives on the HumanoidRootPart as a disabled
+-- AlignPosition + AlignOrientation pair on ClimbCenter/ClimbTarget attachments.
+-- Destroying those breaks climbing until the character respawns, and they hold
+-- nothing while disabled. So anything with an Enabled property is only removed
+-- when it is actually enabled. Legacy BodyMovers have no such property and are
+-- always live, so those still go unconditionally.
+local function sweepMovers(char)
+    if not char then return 0 end
+    local n = 0
+    for _, o in ipairs(char:GetDescendants()) do
+        local isMover = o:IsA("BodyMover") or o:IsA("LinearVelocity")
+            or o:IsA("AngularVelocity") or o:IsA("AlignPosition")
+            or o:IsA("AlignOrientation") or o:IsA("VectorForce") or o:IsA("Torque")
+        if isMover then
+            local okE, enabled = pcall(function() return o.Enabled end)
+            if (not okE) or enabled then
+                n = n + 1
+                pcall(function() o:Destroy() end)
+            end
+        end
+    end
+    return n
+end
+
+-- Returns whether it actually cast, so counters report reality rather than
+-- intent -- the arrival line claimed "4 geppo" on a journey that cast none.
+local function castGeppo(char, root, dir)
+    if not GEPPO_ENABLED_FN() then return false end
+    local from = root.Position
+    task.spawn(function()
+        pcall(function()
+            local ev = RS:FindFirstChild("Events")
+            local skill = ev and ev:FindFirstChild("Skill")
+            if not skill then return end
+            local d = dir or Vector3.zero
+            local up = Vector3.new(d.X * 0.3, 1, d.Z * 0.3).Unit
+            skill:InvokeServer(GEPPO_NAME, {char = char, cf = CFrame.lookAt(from, from + up)})
+        end)
+    end)
+    return true
+end
+
+--------------------------------------------------------------------------------
+-- TENSEN GROUND TRAVEL
+--------------------------------------------------------------------------------
+-- Horizontal is a BodyVelocity with Y EXACTLY ZERO -- the mover never lifts
+-- you. Height is the root CFrame translated to follow the ground, probing both
+-- underfoot and LOOKAHEAD studs ahead and taking the higher, so small steps are
+-- mounted before they are reached. PlatformStand stays FALSE, so the Humanoid
+-- is genuinely grounded and genuinely moving, and THE GAME ITSELF sends
+-- footstep and sprint. Nothing about the movement is faked.
+--
+-- Synchronous: returns true on arrival, false if interrupted or blocked.
+-- planarArrive (optional): count as arrived once within this many studs HORIZONTALLY, whatever the
+-- height. For a target under a tree canopy / overhang: the travel rides the highest surface above
+-- it and could never get within ARRIVE_RADIUS in 3D (it hovered over the tree). The caller then
+-- finishes with a straight tween down to the exact spot.
+local function travelTo(target, label, planarArrive)
+    local char, hrp, hum = parts()
+    if not hrp then return false end
+    refreshSeaLevel()
+
+    local pre = sweepMovers(char)
+    if pre > 0 then log("swept %d stale movers before travelling", pre) end
+
+    local total = (target - hrp.Position).Magnitude
+    local planarStart = Vector3.new(target.X - hrp.Position.X, 0, target.Z - hrp.Position.Z).Magnitude
+    if total <= ARRIVE_RADIUS or (planarArrive and planarStart <= planarArrive) then
+        log("already at %s", label)
+        return true
+    end
+
+    -- Budget scales with the distance. A fixed timeout is what dropped the
+    -- character short of cover once and got it killed.
+    local budget = math.max(TIMEOUT_MIN, (total / SPEED) * TIMEOUT_SLACK + TIMEOUT_GRACE)
+    log("travelling %.0f studs to %s (budget %.0fs)", total, label, budget)
+
+    refreshFilter()
+    local rootLift = hum.HipHeight + hrp.Size.Y * 0.5 + FOOT_CLEARANCE
+
+    local oldAutoRotate = hum.AutoRotate
+    hum.AutoRotate = false
+    hum.PlatformStand = false   -- asserted, never assumed
+
+    local bv = Instance.new("BodyVelocity")
+    bv.Name = "BodyVelocity"
+    bv.MaxForce = Vector3.new(BV_MAXFORCE, BV_MAXFORCE, BV_MAXFORCE)
+    bv.P = BV_P
+    bv.Velocity = Vector3.zero
+    bv.Parent = hrp
+
+    local bg = Instance.new("BodyGyro")
+    bg.Name = "BodyGyro"
+    bg.MaxTorque = Vector3.new(BG_MAXTORQUE, BG_MAXTORQUE, BG_MAXTORQUE)
+    bg.P = BG_P
+    bg.D = BG_D
+    bg.CFrame = hrp.CFrame
+    bg.Parent = hrp
+
+    local startedAt = os.clock()
+    local lastReport, lastWaterGeppo = 0, 0
+    local mode = "run"
+    local climbTargetY, climbStarted, lastGeppo, geppoCount = 0, 0, 0, 0
+    local stallTries, stallAnchor = 0, nil
+    local bestDist, bestAt = total, os.clock()
+
+    -- Ceiling / detour state.
+    local climbBestY, climbBestAt = -math.huge, 0
+    local detourTarget, detourUntil, detourSide, detourCount = nil, 0, 1, 0
+    local lastDetourAt = 0
+    local backoffFrom, loggedBackoff = nil, false   -- leaning back off a wall's lip
+    local result = nil
+
+    local function finish(ok, why)
+        result = ok
+        pcall(function() if bv.Parent then bv:Destroy() end end)
+        pcall(function() if bg.Parent then bg:Destroy() end end)
+        local c, r, h = parts()
+        if r then
+            pcall(function() r.AssemblyLinearVelocity = Vector3.zero end)
+            pcall(function() r.AssemblyAngularVelocity = Vector3.zero end)
+        end
+        if h then
+            pcall(function() h.AutoRotate = oldAutoRotate end)
+            pcall(function() h.PlatformStand = false end)
+        end
+        if why then log("%s", why) end
+    end
+
+    while result == nil do
+        RunService.Stepped:Wait()
+
+        local ok, err = pcall(function()
+            if not isRunning then finish(false, "stopped") return end
+
+            local c = player.Character
+            local root = c and c:FindFirstChild("HumanoidRootPart")
+            local h = c and c:FindFirstChildOfClass("Humanoid")
+            if not root or not bv.Parent then finish(false, "lost the character") return end
+            if h and h.Health <= 0 then finish(false, "died in transit") return end
+
+            -- NOTE: travel no longer aborts on the barrage flag.
+            --
+            -- F.BarrageSeenAt is set when the animation plays and only cleared
+            -- at the end of the fight. If a barrage happened but no hollow ever
+            -- came close enough to trigger cover, the flag stayed set forever
+            -- and EVERY later travelTo aborted on its first frame. Travel also
+            -- only runs between fights, when there is nothing to take cover
+            -- from. Danger is handled where it matters, in the fight loop.
+
+            local pos = root.Position
+            local flat = Vector3.new(target.X - pos.X, 0, target.Z - pos.Z)
+            local planar = flat.Magnitude
+            local dist = (target - pos).Magnitude
+
+            if dist <= ARRIVE_RADIUS or (planarArrive and planar <= planarArrive) then
+                finish(true, string.format("arrived at %s in %.1fs (%d geppo)",
+                    label, os.clock() - startedAt, geppoCount))
+                return
+            end
+
+            if os.clock() - startedAt > budget then
+                finish(false, string.format("timed out with %.0f studs left", dist))
+                return
+            end
+
+            local dir = planar > 0.05 and (flat / planar) or Vector3.zero
+
+            ------------------------------------------------------------------
+            -- CLIMB
+            ------------------------------------------------------------------
+            -- Step sideways around whatever is in the way, instead of trying to
+            -- out-climb it. Alternates side and reaches further each time, so a
+            -- wide obstacle is eventually cleared rather than retried.
+            local function startDetour(why)
+                -- One detour at a time, and never two in the same breath.
+                if detourTarget and os.clock() < detourUntil then return end
+                if os.clock() - lastDetourAt < 1.0 then return end
+                lastDetourAt = os.clock()
+                detourCount = detourCount + 1
+                if detourCount > MAX_DETOURS then
+                    finish(false, string.format("blocked at %.0f studs after %d detours",
+                        dist, detourCount - 1))
+                    return
+                end
+                detourSide = -detourSide
+                local perp = Vector3.new(-dir.Z, 0, dir.X) * detourSide
+                if perp.Magnitude < 0.01 then perp = Vector3.new(1, 0, 0) end
+                local reach = DETOUR_BASE * math.min(detourCount, 4)
+                detourTarget = pos + perp.Unit * reach
+                detourUntil = os.clock() + DETOUR_TIME
+                mode = "run"
+                bestDist, bestAt = dist, os.clock()   -- a detour is not a stall
+                log("%s - stepping %s %.0f studs around it (detour %d)",
+                    why, detourSide > 0 and "right" or "left", reach, detourCount)
+            end
+
+            if mode == "climb" then
+                local done = pos.Y >= climbTargetY
+                local expired = os.clock() - climbStarted > MAX_CLIMB_TIME
+
+                -- Ceiling check: are we actually still rising?
+                if pos.Y > climbBestY + CEILING_RISE then
+                    climbBestY, climbBestAt = pos.Y, os.clock()
+                elseif (not done) and os.clock() - climbBestAt > CEILING_STALL then
+                    local above = Workspace:Raycast(pos, Vector3.new(0, 6, 0), rayParams)
+                    startDetour(string.format("ceiling at Y %.1f (%s)", pos.Y,
+                        above and above.Instance and above.Instance.Name or "unknown"))
+                    return
+                end
+
+                -- Something solid directly overhead. Climbing into it is what
+                -- trips the head noclip check, and sidestepping while still
+                -- pressed to the wall just slides along under the same lip --
+                -- observed at the castle wall before Ryuma's church: a ~37 stud
+                -- wall whose top juts out ("Wedge", Y 87-91), detour, stuck,
+                -- then a flight strike and two noclip detections.
+                --
+                -- So do what a player does: LEAN BACK. Move straight away from
+                -- the wall, not rising, until the head is clear of the lip,
+                -- then climb straight up (see frontBlocked below) and only go
+                -- forward once nothing is in front. Geppo keeps running the
+                -- whole time, so the air time stays legitimate. Only if backing
+                -- off CLIMB_BACKOFF_MAX studs does not clear it, sidestep.
+                if (not done) and headroom(c, root) < HEAD_BLOCKED then
+                    backoffFrom = backoffFrom or pos
+                    local backed = Vector3.new(pos.X - backoffFrom.X, 0, pos.Z - backoffFrom.Z).Magnitude
+                    if backed >= CLIMB_BACKOFF_MAX or dir.Magnitude < 0.01 then
+                        backoffFrom = nil
+                        local above = Workspace:Raycast(pos, Vector3.new(0, 6, 0), rayParams)
+                        startDetour(string.format("no headroom at Y %.1f (%s) even %.0f studs back",
+                            pos.Y, above and above.Instance and above.Instance.Name or "unknown", backed))
+                        return
+                    end
+                    if not loggedBackoff then
+                        loggedBackoff = true
+                        local above = Workspace:Raycast(pos, Vector3.new(0, 6, 0), rayParams)
+                        log("overhang at Y %.1f (%s) - backing off the wall", pos.Y,
+                            above and above.Instance and above.Instance.Name or "unknown")
+                    end
+                    local vel = -dir * CLIMB_BACKOFF_SPEED
+                    bv.Velocity = vel
+                    root.AssemblyLinearVelocity = vel
+                    bg.CFrame = CFrame.lookAt(pos, pos + dir)
+                    -- Not rising is deliberate here, not a ceiling stall.
+                    climbBestAt = os.clock()
+                    if os.clock() - lastGeppo >= GEPPO_CLIMB_INTERVAL then
+                        lastGeppo = os.clock()
+                        if castGeppo(c, root, dir) then geppoCount = geppoCount + 1 end
+                    end
+                    return
+                end
+                if backoffFrom then
+                    log("  clear of the overhang %.0f studs out, climbing straight up",
+                        Vector3.new(pos.X - backoffFrom.X, 0, pos.Z - backoffFrom.Z).Magnitude)
+                    backoffFrom = nil
+                    loggedBackoff = false
+                end
+
+                if done or expired then
+                    log(done and string.format("cleared it at Y %.1f, resuming", pos.Y)
+                        or string.format("climb gave up at Y %.1f (wanted %.1f)", pos.Y, climbTargetY))
+                    mode = "run"
+                    bestDist, bestAt = dist, os.clock()
+                else
+                    -- Never ask for more rise per frame than there is room
+                    -- for. At 65 studs/s one frame is about 1.1 studs, so this
+                    -- only bites when we are genuinely close to something.
+                    local room = headroom(c, root)
+                    local rise = CLIMB_RISE_SPEED
+                    if room < rise * (1 / 60) then rise = room * 60 end
+                    -- Forward and up share one budget, so keep the total
+                    -- inside what the teleport check allows.
+                    -- Straight up while something is in front at body height,
+                    -- forward only once it is clear. Pushing forward into the
+                    -- wall the whole way up is what wedged us under its lip.
+                    local fwd = CLIMB_FORWARD_SPEED
+                    local okS, frontHit = pcall(function()
+                        return Workspace:Spherecast(pos, T.FRONT_RADIUS, dir * 4, rayParams)
+                    end)
+                    if okS and frontHit then fwd = 0 end
+                    local total = math.sqrt(rise * rise + fwd ^ 2)
+                    if total > SPEED then rise = rise * (SPEED / total) end
+                    local vel = Vector3.new(dir.X * fwd, rise, dir.Z * fwd)
+                    bv.Velocity = vel
+                    root.AssemblyLinearVelocity = vel
+                    if dir.Magnitude > 0 then bg.CFrame = CFrame.lookAt(pos, pos + dir) end
+                    if os.clock() - lastGeppo >= GEPPO_CLIMB_INTERVAL then
+                        lastGeppo = os.clock()
+                        if castGeppo(c, root, dir) then geppoCount = geppoCount + 1 end
+                    end
+                    return
+                end
+            end
+
+            ------------------------------------------------------------------
+            -- RUN
+            ------------------------------------------------------------------
+            -- While a detour is active we STEER at the sidestep waypoint but
+            -- still measure arrival and the budget against the real target --
+            -- a detour deliberately does not reduce the distance to the goal,
+            -- so judging progress by it would read as a stall every time.
+            if detourTarget then
+                local toSide = Vector3.new(detourTarget.X - pos.X, 0, detourTarget.Z - pos.Z)
+                if toSide.Magnitude <= ARRIVE_RADIUS or os.clock() > detourUntil then
+                    detourTarget = nil
+                    bestDist, bestAt = dist, os.clock()
+                    climbBestY, climbBestAt = -math.huge, os.clock()
+                    log("  back on course")
+                else
+                    dir = toSide.Unit
+                    planar = toSide.Magnitude
+                end
+            end
+
+            local speed = SPEED
+            if (not detourTarget) and planar < SLOW_RADIUS then
+                speed = math.max(MIN_SPEED, SPEED * (planar / SLOW_RADIUS))
+            end
+
+            local vel = dir * speed
+            bv.Velocity = vel
+            root.AssemblyLinearVelocity = vel
+            if dir.Magnitude > 0 then bg.CFrame = CFrame.lookAt(pos, pos + dir) end
+
+            refreshFilter()
+            local here = surfaceY(pos)
+            local ahead = surfaceY(pos + dir * LOOKAHEAD)
+            local surface = here
+            if ahead and (not surface or ahead > surface) then surface = ahead end
+
+            local overWater = false
+            if (not surface) or surface < SEA_LEVEL then
+                surface = SEA_LEVEL
+                overWater = true
+            end
+
+            local function startClimb(topY, why)
+                -- "Same obstacle" is judged by WHERE we are, not by the
+                -- remaining distance to the stud. Stuck on a fence the
+                -- distance jitters 779, 778, 777, 776 -- the old string key
+                -- never matched twice, so every attempt was "try 1" and the
+                -- escalation that would have cleared the fence never ran.
+                -- Observed: 20+ climbs in a row, all to Y 234.7.
+                if stallAnchor and (pos - stallAnchor).Magnitude <= T.STALL_SAME_SPOT then
+                    stallTries = stallTries + 1
+                else
+                    stallAnchor, stallTries = pos, 1
+                end
+                climbTargetY = math.max(topY, pos.Y)
+                    + CLIMB_CLEAR + (stallTries - 1) * CLIMB_ESCALATE
+                mode = "climb"
+                climbStarted = os.clock()
+                lastGeppo = 0
+                -- Fresh ceiling baseline, or the previous climb's best height
+                -- would make this one look stalled from its first frame.
+                backoffFrom, loggedBackoff = nil, false
+                climbBestY, climbBestAt = pos.Y, os.clock()
+                log("%s - geppo climbing to Y %.1f (try %d)", why, climbTargetY, stallTries)
+            end
+
+            -- The stall backstop is suspended during a detour: a sidestep is
+            -- MEANT not to reduce the distance to the goal, so it would read as
+            -- a stall on every frame and start a climb into the same ceiling we
+            -- are walking around.
+            if dist < bestDist - STALL_DIST then
+                bestDist, bestAt = dist, os.clock()
+                -- Only forget the obstacle once we are actually clear of it;
+                -- inching 2 studs along a fence is not getting past it.
+                if stallAnchor and (pos - stallAnchor).Magnitude > T.STALL_SAME_SPOT then
+                    stallAnchor, stallTries = nil, 0
+                end
+            elseif (not detourTarget) and os.clock() - bestAt > STALL_TIME then
+                if stallTries >= MAX_CLIMB_TRIES then
+                    startDetour(string.format("stuck at %.0f studs after %d climbs",
+                        dist, stallTries))
+                    return
+                end
+                -- Climb to what is actually IN FRONT of us, not to the ground
+                -- under it: the downward probe falls between fence bars and
+                -- reads the ground, so a fence looked like nothing at all.
+                local front = obstacleTop(pos, dir)
+                local topY = surface + rootLift
+                if front and front > topY then topY = front end
+                startClimb(topY, string.format("stalled at %.0f studs%s", dist,
+                    front and string.format(" (blocked up to Y %.1f)", front) or ""))
+                return
+            end
+
+            local wantY = overWater and (SEA_LEVEL + rootLift + WATER_RIDE)
+                or (surface + rootLift)
+            local dy = wantY - pos.Y
+
+            -- NOT during a detour. A detour exists because climbing here
+            -- already failed, and the sidestep needs frames to actually move
+            -- us sideways. Without this guard the next frame reads the same
+            -- wall, starts another climb, hits the same overhang and cancels
+            -- the detour -- observed as 8 detours inside 0.25 seconds followed
+            -- by "blocked after 8 detours", having moved nowhere.
+            if (not overWater) and (not detourTarget) and dy > CLIMB_THRESHOLD then
+                startClimb(wantY, string.format("terrain %.0f studs high ahead", dy))
+                return
+            end
+
+            -- Easing onto the destination's height only makes sense when the
+            -- destination is what we are heading for; mid-detour `planar` is
+            -- the distance to the sidestep, not to the goal.
+            if (not detourTarget) and planar < SLOW_RADIUS then
+                local ts = surfaceY(target)
+                local settle = (ts and ts >= SEA_LEVEL) and (ts + rootLift) or target.Y
+                wantY = wantY + (settle - wantY) * (1 - planar / SLOW_RADIUS)
+                dy = wantY - pos.Y
+            end
+
+            if dy > SNAP_RISE then        -- applied in full: the hop-on-top look
+            elseif dy > 0 then dy = dy * RISE_ALPHA
+            else dy = dy * FALL_ALPHA end
+
+            -- A CFrame write ignores collision, so an upward step straight into
+            -- an overhang puts the head inside it and trips the noclip check.
+            -- Clamp the rise to the clear space above and let the stall logic
+            -- find a way around instead.
+            if dy > 0 then
+                dy = math.min(dy, headroom(c, root))
+            end
+
+            -- Cap the translation to a rate. A long drop simply takes longer:
+            -- 200 studs at 12 studs/s is about 17 seconds, which is why
+            -- hoverLand exists for coming down from the hover rather than
+            -- letting travel do it.
+            local vstep = MAX_VERT_SPEED * (1 / 60)         -- up
+            local fstep = MAX_DESCEND_SPEED * (1 / 60)      -- down
+            dy = math.clamp(dy, -fstep, vstep)
+
+            if math.abs(dy) > 0.001 then
+                -- Translate only: adding a Vector3 to a CFrame keeps the
+                -- rotation, so this never fights the BodyGyro.
+                root.CFrame = root.CFrame + Vector3.new(0, dy, 0)
+            end
+
+            -- You cannot stand on water, so crossing open sea needs geppo to
+            -- stay accounted for. Slow cadence, as the capture showed.
+            if overWater and os.clock() - lastWaterGeppo >= WATER_GEPPO_EVERY then
+                lastWaterGeppo = os.clock()
+                if castGeppo(c, root, dir) then geppoCount = geppoCount + 1 end
+            end
+
+            if os.clock() - lastReport >= 3 then
+                lastReport = os.clock()
+                log("  %s: %.0f studs to go", label, dist)
+            end
+        end)
+
+        if not ok then
+            finish(false, "travel error (caught): " .. tostring(err))
+        end
+    end
+
+    return result == true
+end
+
+        TWN.travelTo = travelTo
+        -- the climb pieces, for legacySafeMoveTo's big walls (same functions, same numbers)
+        TWN.refreshFilter = refreshFilter
+        TWN.headroom = headroom
+        TWN.obstacleTop = obstacleTop
+        TWN.castGeppo = castGeppo
+        TWN.rayParams = rayParams
+        TWN.C = {
+            SPEED = SPEED,
+            CLIMB_RISE_SPEED = CLIMB_RISE_SPEED,
+            CLIMB_FORWARD_SPEED = CLIMB_FORWARD_SPEED,
+            CLIMB_CLEAR = CLIMB_CLEAR,
+            MAX_CLIMB_TIME = MAX_CLIMB_TIME,
+            CLIMB_BACKOFF_SPEED = CLIMB_BACKOFF_SPEED,
+            CLIMB_BACKOFF_MAX = CLIMB_BACKOFF_MAX,
+            HEAD_BLOCKED = HEAD_BLOCKED,
+            CEILING_STALL = CEILING_STALL,
+            CEILING_RISE = CEILING_RISE,
+            DETOUR_BASE = DETOUR_BASE,
+            DETOUR_TIME = DETOUR_TIME,
+            MAX_DETOURS = MAX_DETOURS,
+            GEPPO_CLIMB_INTERVAL = GEPPO_CLIMB_INTERVAL,
+            FRONT_RADIUS = T.FRONT_RADIUS,
+        }
+    end
+
+    local function legacySafeMoveTo(destination, ignoreYLimit, noNoclip)
+        isTraveling = true
+        local char = player.Character or player.CharacterAdded:Wait()
+        local hrp = char:WaitForChild("HumanoidRootPart", 10)
+        local hum = char:WaitForChild("Humanoid", 10)
+        if not hrp or not hum then isTraveling = false return end
+
+        for _, obj in ipairs(hrp:GetChildren()) do
+            if obj:IsA("BodyMover") or obj:IsA("Constraint") then obj:Destroy() end
+        end
+
+        local noclipConnection = nil
+        if noNoclip or not noclipAllowed() then
+            -- Collisions stay ON for this move -- either the caller asked for it
+            -- (Fishman quest NPC) or the tier is flagged NoNoclip. Make sure
+            -- nothing was left non-collidable by an earlier move.
+            restoreCollisions(char)
+        else
+            noclipConnection = RunService.Stepped:Connect(function()
+                if char then
+                    for _, part in ipairs(char:GetDescendants()) do
+                        if part:IsA("BasePart") then part.CanCollide = false end
+                    end
+                end
+            end)
+        end
+
+        local overlapParams = OverlapParams.new()
+        overlapParams.FilterType = Enum.RaycastFilterType.Exclude
+        overlapParams.FilterDescendantsInstances = {char}
+        local ctrlPressed = false
+
+        -- BIG WALLS: BossRotation's climb (its travelTo "climb" mode, the same
+        -- functions and numbers through TWN), replacing this mover's old
+        -- hold-LeftControl-and-creep-up. Rise at CLIMB_RISE_SPEED with the whole
+        -- move capped at the travel speed; forward only once nothing is in front
+        -- at body height; geppo every 0.25s so the air time is accounted for;
+        -- never rise into the space above the head (lean back off an overhang);
+        -- step sideways when the climb stops gaining height. The climb target is
+        -- whatever is actually in front (a sphere sweep, so fences count), plus
+        -- CLIMB_CLEAR; a wall taller than the sweep is climbed in stages.
+        local C = TWN.C
+        local climb = nil -- { targetY, dir, started, bestY, bestAt, lastGeppo, backoffFrom, loggedBackoff }
+        local detourTarget, detourUntil, detourSide, detourCount, lastDetourAt = nil, 0, 1, 0, 0
+
+        local function climbLog(fmt, ...)
+            local ok, msg = pcall(string.format, "[TWN] " .. fmt, ...)
+            print(ok and msg or ("[TWN] " .. tostring(fmt)))
+        end
+
+        -- returns false when it has run out of detours (the move is given up)
+        local function startDetour(dir, why, force)
+            if detourTarget and os.clock() < detourUntil and not force then return true end
+            if os.clock() - lastDetourAt < 1.0 then return true end
+            lastDetourAt = os.clock()
+            detourCount = detourCount + 1
+            climb = nil
+            if detourCount > C.MAX_DETOURS then
+                climbLog("blocked after %d detours - giving up this move", detourCount - 1)
+                return false
+            end
+            detourSide = -detourSide
+            local perp = Vector3.new(-dir.Z, 0, dir.X) * detourSide
+            if perp.Magnitude < 0.01 then perp = Vector3.new(1, 0, 0) end
+            local reach = C.DETOUR_BASE * math.min(detourCount, 4)
+            detourTarget = hrp.Position + perp.Unit * reach
+            detourUntil = os.clock() + C.DETOUR_TIME
+            climbLog("%s - stepping %s %.0f studs around it (detour %d)", why, detourSide > 0 and "right" or "left", reach, detourCount)
+            return true
+        end
+
+        local function startClimb(dir)
+            TWN.refreshFilter()
+            local pos = hrp.Position
+            local front = TWN.obstacleTop(pos, dir)
+            local topY = math.max(front or pos.Y, pos.Y)
+            climb = {
+                targetY = topY + C.CLIMB_CLEAR, dir = dir, started = os.clock(),
+                bestY = pos.Y, bestAt = os.clock(), lastGeppo = 0, backoffFrom = nil, loggedBackoff = false,
+            }
+            climbLog("wall ahead%s - geppo climbing to Y %.1f", front and string.format(" (blocked up to Y %.1f)", front) or "", climb.targetY)
+        end
+
+        -- one frame of the climb: "climbing" | "done" | "abort"
+        local function climbStep(dt)
+            local pos = hrp.Position
+            local dir = climb.dir
+            local now = os.clock()
+            local done = pos.Y >= climb.targetY
+            local expired = now - climb.started > C.MAX_CLIMB_TIME
+
+            -- ceiling: are we actually still rising?
+            if pos.Y > climb.bestY + C.CEILING_RISE then
+                climb.bestY, climb.bestAt = pos.Y, now
+            elseif (not done) and now - climb.bestAt > C.CEILING_STALL then
+                local above = Workspace:Raycast(pos, Vector3.new(0, 6, 0), TWN.rayParams)
+                local ok = startDetour(dir, string.format("ceiling at Y %.1f (%s)", pos.Y, above and above.Instance and above.Instance.Name or "unknown"))
+                return ok and "done" or "abort"
+            end
+
+            -- something solid right overhead: lean back off the wall, still not rising
+            if (not done) and TWN.headroom(char, hrp) < C.HEAD_BLOCKED then
+                climb.backoffFrom = climb.backoffFrom or pos
+                local backed = Vector3.new(pos.X - climb.backoffFrom.X, 0, pos.Z - climb.backoffFrom.Z).Magnitude
+                if backed >= C.CLIMB_BACKOFF_MAX then
+                    local ok = startDetour(dir, string.format("no headroom at Y %.1f even %.0f studs back", pos.Y, backed))
+                    return ok and "done" or "abort"
+                end
+                if not climb.loggedBackoff then
+                    climb.loggedBackoff = true
+                    climbLog("overhang at Y %.1f - backing off the wall", pos.Y)
+                end
+                local vel = -dir * C.CLIMB_BACKOFF_SPEED
+                local nextPos = pos + vel * dt
+                hrp.CFrame = CFrame.lookAt(nextPos, nextPos + dir)
+                hrp.AssemblyLinearVelocity = vel
+                climb.bestAt = now -- not rising is deliberate here, not a ceiling stall
+                if now - climb.lastGeppo >= C.GEPPO_CLIMB_INTERVAL then
+                    climb.lastGeppo = now
+                    TWN.castGeppo(char, hrp, dir)
+                end
+                return "climbing"
+            end
+            if climb.backoffFrom then
+                climbLog("  clear of the overhang, climbing straight up")
+                climb.backoffFrom, climb.loggedBackoff = nil, false
+            end
+
+            if done then
+                climbLog("cleared it at Y %.1f, resuming", pos.Y)
+                climb = nil
+                return "done"
+            end
+            if expired then
+                climbLog("climb gave up at Y %.1f (wanted %.1f)", pos.Y, climb.targetY)
+                local ok = startDetour(dir, "climb timed out")
+                return ok and "done" or "abort"
+            end
+
+            -- rise limited by the headroom, forward only when the front is clear, the whole move capped at the speed
+            local room = TWN.headroom(char, hrp)
+            local rise = C.CLIMB_RISE_SPEED
+            if room < rise * (1 / 60) then rise = room * 60 end
+            local fwd = C.CLIMB_FORWARD_SPEED
+            local okS, frontHit = pcall(function()
+                return Workspace:Spherecast(pos, C.FRONT_RADIUS, dir * 4, TWN.rayParams)
+            end)
+            if okS and frontHit then fwd = 0 end
+            local total = math.sqrt(rise * rise + fwd * fwd)
+            if total > C.SPEED then rise = rise * (C.SPEED / total) end
+            local vel = Vector3.new(dir.X * fwd, rise, dir.Z * fwd)
+            local nextPos = pos + vel * dt
+            hrp.CFrame = CFrame.lookAt(nextPos, nextPos + dir)
+            hrp.AssemblyLinearVelocity = vel
+            if now - climb.lastGeppo >= C.GEPPO_CLIMB_INTERVAL then
+                climb.lastGeppo = now
+                TWN.castGeppo(char, hrp, dir)
+            end
+            return "climbing"
+        end
+
+        -- ignoreYLimit mode (Fishman tier): fly in a straight 3D line to the destination, ignoring
+        -- the water surface / ground / walls. Swimming is disabled so buoyancy can't push us up.
+        local swimWasEnabled = true
+        if ignoreYLimit then
+            pcall(function()
+                swimWasEnabled = hum:GetStateEnabled(Enum.HumanoidStateType.Swimming)
+                hum:SetStateEnabled(Enum.HumanoidStateType.Swimming, false)
+                hum.PlatformStand = true
+                -- NOT ChangeState(Physics): the game's RagdollHandler ragdolls the character in
+                -- the Physics state. PlatformStand + swimming off is enough against buoyancy.
+            end)
+        end
+
+        while isRunning and isTraveling do
+            local dt = RunService.Heartbeat:Wait()
+            if not char or not char.Parent or hum.Health <= 0 then break end
+
+            local currentPos = hrp.Position
+            if (destination - currentPos).Magnitude <= 4.0 then break end
+
+            if ignoreYLimit then
+                local toDest = destination - currentPos
+                local dir = toDest.Unit
+                local step = math.min(TRAVEL_SPEED * dt, toDest.Magnitude)
+                local nextPos = currentPos + dir * step
+                local flatLook = Vector3.new(dir.X, 0, dir.Z)
+                if flatLook.Magnitude < 0.01 then flatLook = hrp.CFrame.LookVector end
+                hrp.CFrame = CFrame.lookAt(nextPos, nextPos + flatLook)
+                hrp.AssemblyLinearVelocity = Vector3.zero
+                continue
+            end
+
+            -- a BossRotation climb in progress owns the frame
+            if climb then
+                local res = climbStep(dt)
+                if res == "abort" then break end
+                if res == "climbing" then continue end
+                currentPos = hrp.Position
+            end
+
+            -- a BossRotation detour steers at its sidestep point; arrival is still judged against the real destination
+            local steerTo = destination
+            if detourTarget then
+                local toSide = Vector3.new(detourTarget.X - currentPos.X, 0, detourTarget.Z - currentPos.Z)
+                if toSide.Magnitude <= 5.5 or os.clock() > detourUntil then
+                    detourTarget = nil
+                    climbLog("  back on course")
+                else
+                    steerTo = Vector3.new(detourTarget.X, destination.Y, detourTarget.Z)
+                end
+            end
+
+            local flatTarget = Vector3.new(steerTo.X, currentPos.Y, steerTo.Z)
+            local toTarget = (flatTarget - currentPos)
+            local dist2D = toTarget.Magnitude
+
+            if dist2D < 0.1 then 
+                local yDir = math.sign(destination.Y - currentPos.Y)
+                local yStep = math.min(TRAVEL_SPEED * dt, math.abs(destination.Y - currentPos.Y))
+                local nextPos = currentPos + Vector3.new(0, yDir * yStep, 0)
+                hrp.CFrame = CFrame.lookAt(nextPos, nextPos + hrp.CFrame.LookVector)
+                continue 
+            end
+
+            local moveDir = toTarget.Unit
+            if dist2D <= FINAL_APPROACH_RADIUS and not detourTarget then
+                if ctrlPressed then VIM:SendKeyEvent(false, Enum.KeyCode.LeftControl, false, game) ctrlPressed = false end
+                local toRealTarget = (destination - currentPos)
+                local moveDir3D = toRealTarget.Unit
+                local step3D = math.min(TRAVEL_SPEED * dt, toRealTarget.Magnitude)
+                local nextPos = currentPos + (moveDir3D * step3D)
+                hrp.CFrame = CFrame.lookAt(nextPos, nextPos + moveDir)
+                hrp.AssemblyLinearVelocity = moveDir3D * TRAVEL_SPEED
+                continue
+            end
+
+            local stepDistance = math.min(TRAVEL_SPEED * dt, dist2D)
+            local feetY = currentPos.Y - HIP_HEIGHT
+            local forwardBoxCenter = CFrame.new(currentPos.X + (moveDir.X * 3), feetY + 2, currentPos.Z + (moveDir.Z * 3))
+            local forwardParts = Workspace:GetPartBoundsInBox(forwardBoxCenter, Vector3.new(3, 3, 3), overlapParams)
+
+            local pathBlocked = false
+            for _, part in ipairs(forwardParts) do
+                if part.CanCollide and not part.Name:lower():match("water") then
+                    pathBlocked = true
+                    break
+                end
+            end
+
+            if pathBlocked then
+                local highBoxCenter = CFrame.new(currentPos.X + (moveDir.X * 3), feetY + 10.5, currentPos.Z + (moveDir.Z * 3))
+                local highParts = Workspace:GetPartBoundsInBox(highBoxCenter, Vector3.new(3, 1, 3), overlapParams)
+                local isTallWall = false
+                for _, part in ipairs(highParts) do
+                    if part.CanCollide and not part.Name:lower():match("water") then isTallWall = true break end
+                end
+
+                if not isTallWall then
+                    local surfaceY = feetY + 1
+                    for h = 10, 1, -0.5 do 
+                        local scanCenter = CFrame.new(currentPos.X + (moveDir.X * 3), feetY + h, currentPos.Z + (moveDir.Z * 3))
+                        local scanParts = Workspace:GetPartBoundsInBox(scanCenter, Vector3.new(3, 0.5, 3), overlapParams)
+                        local hitObj = false
+                        for _, p in ipairs(scanParts) do
+                            if p.CanCollide and not p.Name:lower():match("water") then hitObj = true break end
+                        end
+                        if hitObj then surfaceY = (feetY + h) + 0.25 break end
+                    end
+                    local nextPos = Vector3.new(currentPos.X + (moveDir.X * stepDistance), surfaceY + HIP_HEIGHT, currentPos.Z + (moveDir.Z * stepDistance))
+                    hrp.CFrame = CFrame.lookAt(nextPos, nextPos + moveDir)
+                else
+                    -- a big wall: BossRotation's climb (see startClimb / climbStep above).
+                    -- BossRotation never climbs while sidestepping, so mid-detour a new
+                    -- wall starts a fresh detour instead (or we wait out the 1s spacing).
+                    if ctrlPressed then VIM:SendKeyEvent(false, Enum.KeyCode.LeftControl, false, game) ctrlPressed = false end
+                    hrp.AssemblyLinearVelocity = Vector3.zero
+                    if detourTarget then
+                        if not startDetour(moveDir, "another wall in the way of the detour", true) then break end
+                    else
+                        startClimb(moveDir)
+                    end
+                    continue
+                end
+                hrp.AssemblyLinearVelocity = Vector3.zero
+                continue
+            end
+
+            if ctrlPressed then VIM:SendKeyEvent(false, Enum.KeyCode.LeftControl, false, game) ctrlPressed = false end
+
+            local footBoxCenter = CFrame.new(currentPos.X, feetY - 0.5, currentPos.Z)
+            local footParts = Workspace:GetPartBoundsInBox(footBoxCenter, Vector3.new(3, 1, 3), overlapParams)
+            local onGround = false
+            for _, part in ipairs(footParts) do
+                if part.CanCollide and not part.Name:lower():match("water") then onGround = true break end
+            end
+
+            local nextY = currentPos.Y
+            local minTargetY = ignoreYLimit and destination.Y or (DESIRED_MIN_Y + HIP_HEIGHT)
+
+            if ignoreYLimit or not onGround then
+                if currentPos.Y > minTargetY then
+                    nextY = math.clamp(currentPos.Y - (TRAVEL_SPEED * dt), minTargetY, currentPos.Y)
+                elseif currentPos.Y < minTargetY then
+                    nextY = math.clamp(currentPos.Y + (TRAVEL_SPEED * dt), currentPos.Y, minTargetY)
+                end
+            end
+
+            local nextPos = currentPos + Vector3.new(moveDir.X * stepDistance, nextY - currentPos.Y, moveDir.Z * stepDistance)
+            hrp.CFrame = CFrame.lookAt(nextPos, nextPos + moveDir)
+            hrp.AssemblyLinearVelocity = Vector3.new(moveDir.X * TRAVEL_SPEED, 0, moveDir.Z * TRAVEL_SPEED)
+        end
+
+        if ctrlPressed then VIM:SendKeyEvent(false, Enum.KeyCode.LeftControl, false, game) end
+        if noclipConnection then noclipConnection:Disconnect() end
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        if ignoreYLimit then
+            pcall(function()
+                hum.PlatformStand = false
+                hum:SetStateEnabled(Enum.HumanoidStateType.Swimming, swimWasEnabled)
+                hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+            end)
+        end
+        isTraveling = false
+    end
+
+    -- Normal moves go through BossRotation's travel (TWN.travelTo). Two things keep
+    -- the old code: the underwater Fishman moves (ignoreYLimit -- the new travel
+    -- rides the sea surface and cannot go under it) and straightLineTween, which
+    -- is left alone entirely.
+    local function safeMoveTo(destination, ignoreYLimit, noNoclip, planarArrive)
+        -- A tier flagged UseLegacyTween (Help Noah) keeps the old mover entirely.
+        if ignoreYLimit or (activeQuestConfig and activeQuestConfig.UseLegacyTween) then
+            normalTweening = true
+            local okL, res = pcall(legacySafeMoveTo, destination, ignoreYLimit, noNoclip)
+            normalTweening = false
+            if not okL then print("[TWN] legacy travel error (caught): " .. tostring(res)) end
+            return res
+        end
+        normalTweening = true
+        isTraveling = true
+        local ok, err = pcall(TWN.travelTo, destination, "destination", planarArrive)
+        if not ok then print("[TWN] travel error (caught): " .. tostring(err)) end
+
+        -- travelTo stops a few studs short (ARRIVE_RADIUS), and the NPC / Robo is a
+        -- solid body, so close the last stretch with a short direct glide with
+        -- collisions dropped for its duration (as the old mover did for the whole
+        -- trip), unless the tier is flagged NoNoclip. Only if we are already close.
+        local glideNoclip = nil
+        pcall(function()
+            local char = player.Character
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            if not hrp or (destination - hrp.Position).Magnitude > 12 then return end
+            if noclipAllowed() and not noNoclip then
+                glideNoclip = RunService.Stepped:Connect(function()
+                    local c = player.Character
+                    if not c then return end
+                    for _, part in ipairs(c:GetDescendants()) do
+                        if part:IsA("BasePart") then part.CanCollide = false end
+                    end
+                end)
+            end
+            local t0 = os.clock()
+            while isRunning and os.clock() - t0 < 2 do
+                local d = destination - hrp.Position
+                if d.Magnitude <= 2.5 then break end
+                local dt = RunService.Heartbeat:Wait()
+                local step = math.min(math.min(TRAVEL_SPEED, 25) * dt, d.Magnitude)
+                local rot = hrp.CFrame - hrp.CFrame.Position
+                hrp.CFrame = CFrame.new(hrp.Position + d.Unit * step) * rot
+                hrp.AssemblyLinearVelocity = Vector3.zero
+            end
+        end)
+        if glideNoclip then
+            glideNoclip:Disconnect()
+            restoreCollisions()
+        end
+        isTraveling = false
+        normalTweening = false
+    end
+
+    -- Straight-line move at a constant speed. Moves the character every render frame (before the
+    -- camera updates) and keeps the camera from ever getting further from the character than it
+    -- was when the move started, so the game's camera-distance check can't be tripped.
+    local function straightLineTween(destination, speedVal)
+        isTraveling = true
+        local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+        if not hrp then isTraveling = false return end
+
+        for _, obj in ipairs(hrp:GetChildren()) do
+            if obj:IsA("BodyMover") or obj:IsA("Constraint") then obj:Destroy() end
+        end
+
+        local cam = Workspace.CurrentCamera
+        local startCamDist = cam and (cam.CFrame.Position - hrp.Position).Magnitude or 0
+        local maxCamDist = startCamDist + 3
+
+        -- nil on a NoNoclip tier, so the tween moves us without ever dropping
+        -- collisions. The cleanup below guards against that nil.
+        local noclip = nil
+        if noclipAllowed() then
+            noclip = RunService.Stepped:Connect(function()
+                local c = player.Character
+                if not c then return end
+                for _, part in ipairs(c:GetDescendants()) do
+                    if part:IsA("BasePart") then part.CanCollide = false end
+                end
+            end)
+        else
+            restoreCollisions()
+        end
+
+        -- Water fix: the Humanoid's Swimming state applies buoyancy that pushes us back up every
+        -- physics step, which cancels the downward tween (character looks stuck in the water).
+        -- Turn swimming off and put the humanoid in the Physics state while we move.
+        local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+        local swimWasEnabled = true
+        if hum then
+            pcall(function()
+                swimWasEnabled = hum:GetStateEnabled(Enum.HumanoidStateType.Swimming)
+                hum:SetStateEnabled(Enum.HumanoidStateType.Swimming, false)
+                hum.PlatformStand = true
+                -- NOT ChangeState(Physics): the game's RagdollHandler ragdolls the character in
+                -- the Physics state. PlatformStand + swimming off is enough against buoyancy.
+            end)
+        end
+
+        local finished = false
+        local lastSet = nil -- last position we commanded; used to undo any buoyancy drift
+        local id = "StraightMove_" .. tostring(math.random(1, 1e9))
+
+        -- 1) move the character just before the camera script runs
+        RunService:BindToRenderStep(id .. "_move", Enum.RenderPriority.Camera.Value - 1, function(dt)
+            local h = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+            if not h then finished = true return end
+
+            local pos = h.Position
+            local toTarget = destination - pos
+            local dist = toTarget.Magnitude
+            local rot = h.CFrame - h.CFrame.Position
+
+            if dist <= 0.5 then
+                h.CFrame = CFrame.new(destination) * rot
+                h.AssemblyLinearVelocity = Vector3.zero
+                finished = true
+                return
+            end
+
+            local nextPos = pos + toTarget.Unit * math.min(speedVal * dt, dist)
+            h.CFrame = CFrame.new(nextPos) * rot
+            h.AssemblyLinearVelocity = Vector3.zero
+            lastSet = nextPos
+        end)
+
+        -- 1b) after physics: if buoyancy/water pushed us off the commanded position, snap back
+        local driftConn = RunService.Heartbeat:Connect(function()
+            local h = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+            if not h or not lastSet or finished then return end
+            if (h.Position - lastSet).Magnitude > 0.05 then
+                local rot = h.CFrame - h.CFrame.Position
+                h.CFrame = CFrame.new(lastSet) * rot
+            end
+            h.AssemblyLinearVelocity = Vector3.zero
+            h.AssemblyAngularVelocity = Vector3.zero
+        end)
+
+        -- 2) after the camera script: never let the camera drift further away than when we started
+        RunService:BindToRenderStep(id .. "_cam", Enum.RenderPriority.Last.Value, function()
+            local camera = Workspace.CurrentCamera
+            local h = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+            if not camera or not h then return end
+
+            local offset = camera.CFrame.Position - h.Position
+            if offset.Magnitude > maxCamDist then
+                local newPos = h.Position + offset.Unit * maxCamDist
+                camera.CFrame = CFrame.new(newPos) * (camera.CFrame - camera.CFrame.Position)
+            end
+        end)
+
+        while not finished and isRunning and isTraveling do
+            task.wait()
+        end
+
+        RunService:UnbindFromRenderStep(id .. "_move")
+        RunService:UnbindFromRenderStep(id .. "_cam")
+        driftConn:Disconnect()
+        if noclip then noclip:Disconnect() end
+        local h = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+        if h then h.AssemblyLinearVelocity = Vector3.zero end
+        if hum then
+            pcall(function()
+                hum.PlatformStand = false
+                hum:SetStateEnabled(Enum.HumanoidStateType.Swimming, swimWasEnabled)
+                hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+            end)
+        end
+        isTraveling = false
+    end
+
+    -- Moves to Robo, STANDS DOWN from hover (so we're a normal grounded player), then fires SetSpawn.
+    local NEAR_ROBO_RADIUS = 4   -- must be this close before we release the hover
+    local SETTLE_TOLERANCE = 4   -- extra distance allowed after we drop onto the ground
+    local ROBO_ROOM_RADIUS = 45  -- within this of Robo = we are inside his room (the doorway is ~49 away)
+
+    local function setSpawnAtRobo(roboPos, ignoreY, doorway)
+        local function distToRobo()
+            local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+            return hrp and (hrp.Position - roboPos).Magnitude or math.huge
+        end
+
+        -- 0. Robo behind a door: stand at the front of the doorway first, so the
+        -- travel below goes IN through it instead of trying to cross the roof.
+        --
+        -- Both legs through the door are the STRAIGHT tween, not the ground travel:
+        -- seen live, the ground travel stopped a few studs off the door line, hit
+        -- the wall beside it, read that as a cliff and geppo-climbed the restaurant
+        -- wall (a Greater Flight Strike, 39 studs off the floor). The straight tween
+        -- goes exactly where it is told, and the doorway and Robo are almost level.
+        if doorway and not ignoreY and distToRobo() > NEAR_ROBO_RADIUS then
+            if distToRobo() <= ROBO_ROOM_RADIUS then
+                -- already in Robo's room (respawned / spawn already here): straight tween to him
+                straightLineTween(roboPos, TRAVEL_SPEED)
+            else
+                safeMoveTo(doorway)                          -- get to the doorway's front
+                straightLineTween(doorway, TRAVEL_SPEED)     -- ...exactly on the door line
+                straightLineTween(roboPos, TRAVEL_SPEED)     -- ...then straight in to Robo
+            end
+        end
+
+        -- 1. get near Robo (retry travel up to 3 times)
+        for _ = 1, 3 do
+            if not isRunning then return false end
+            if distToRobo() <= NEAR_ROBO_RADIUS then break end
+            safeMoveTo(roboPos, ignoreY)
+        end
+
+        task.wait(5) -- hover near robo
+
+        if distToRobo() > NEAR_ROBO_RADIUS then
+            safeMoveTo(roboPos, ignoreY)
+            task.wait(1)
+        end
+
+        local startDist = distToRobo()
+        if startDist > NEAR_ROBO_RADIUS then
+            notify("Navigation", string.format("Not near Robo (%.1f studs) - spawn NOT set.", startDist), 4)
+            return false
+        end
+
+        -- 2. drop out of hover/noclip, stand on the ground like a normal player, then fire
+        settlingForSpawn = true
+        local ran, fired, grounded, finalDist, err = pcall(function()
+            task.wait(0.1) -- let the hover engine's current frame finish
+            stopHoverPhysics() -- removes the BodyVelocity and turns collisions back on
+
+            local char = player.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            if hum then hum:ChangeState(Enum.HumanoidStateType.GettingUp) end
+
+            local isGrounded = false
+            local t0 = tick()
+            while tick() - t0 < 3 do
+                if hum and hum.FloorMaterial ~= Enum.Material.Air then isGrounded = true break end
+                task.wait(0.1)
+            end
+            if isGrounded then task.wait(1.5) end -- stand for a moment so the server sees us grounded and still
+
+            local dist = distToRobo()
+            if dist > NEAR_ROBO_RADIUS + SETTLE_TOLERANCE then
+                return false, isGrounded, dist, nil
+            end
+
+            local function fireSpawnRemote(label)
+                local okR, eR = pcall(function()
+                    game:GetService("ReplicatedStorage"):WaitForChild("Events"):WaitForChild("SetSpawn"):FireServer()
+                end)
+                return okR, eR
+            end
+
+            -- A) fire the remote
+            local ok, e = fireSpawnRemote("first")
+            task.wait(0.5)
+
+            -- B) fire once more to make sure the server registers it
+            local ok2, e2 = fireSpawnRemote("second")
+            ok = ok or ok2
+            e = e or e2
+            task.wait(0.5) -- give the server time to register it before hover resumes
+            return ok, isGrounded, dist, e
+        end)
+        settlingForSpawn = false
+
+        if not ran then
+            notify("Navigation", "Spawn step errored: " .. tostring(fired), 4)
+            return false
+        end
+        if fired then
+            notify("Navigation", string.format("SetSpawn fired (%.1f studs, grounded: %s).", finalDist, tostring(grounded)), 6)
+            return true
+        end
+        if err then
+            notify("Navigation", "SetSpawn errored: " .. tostring(err), 4)
+        else
+            notify("Navigation", string.format("Drifted from Robo (%.1f studs, grounded: %s) - spawn NOT set.", finalDist, tostring(grounded)), 4)
+        end
+        return false
+    end
+
+    -- Out of Robo's room: if we are inside it, straight tween to the doorway.
+    local function leaveRoboRoom(config)
+        local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+        if not (config and config.RoboDoorway and config.RoboPosition and hrp) then return end
+        if (hrp.Position - config.RoboPosition).Magnitude > ROBO_ROOM_RADIUS then return end
+        notify("Navigation", "Leaving Robo's room...", 2)
+        straightLineTween(config.RoboDoorway, TRAVEL_SPEED)
+    end
+
+    -- FISHMAN ISLAND ONE-TIME PATH (remembered per account in a file)
+    local fishmanPathDoneSession = false
+    local function fishmanFlagFile()
+        return "FishmanPath_" .. player.Name .. ".txt"
+    end
+
+    local function hasFishmanPathDone()
+        if fishmanPathDoneSession then return true end
+        if isfile then
+            local ok, exists = pcall(function() return isfile(fishmanFlagFile()) end)
+            if ok and exists then
+                fishmanPathDoneSession = true
+                return true
+            end
+        end
+        return false
+    end
+
+    local function markFishmanPathDone()
+        fishmanPathDoneSession = true
+        if writefile then
+            pcall(function() writefile(fishmanFlagFile(), "done") end)
+        end
+    end
+
+    local function runFishmanPath(config)
+        notify("Navigation", "Fishman path: first time on this account...", 4)
+        local pathSpeed = getgenv().Config.Speed.FishmanPath or (TRAVEL_SPEED * 0.75)
+
+        for i, step in ipairs(config.PathToRobo) do
+            if not isRunning then return false end
+            notify("Fishman path", string.format("Step %d/%d", i, #config.PathToRobo), 2)
+            if step.Mode == "straight" then
+                straightLineTween(step.Pos, pathSpeed)
+            else
+                safeMoveTo(step.Pos)
+            end
+            if step.Wait then task.wait(step.Wait) end
+        end
+
+        -- Robo (normal safeMoveTo, retry up to 3 times)
+        local function distToRobo()
+            local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+            return hrp and (hrp.Position - config.RoboPosition).Magnitude or math.huge
+        end
+        for _ = 1, 3 do
+            if not isRunning then return false end
+            if distToRobo() <= 10 then break end
+            safeMoveTo(config.RoboPosition, true) -- true = follow the target's Y (Robo is deep underwater)
+        end
+
+        if distToRobo() > 10 then
+            return false -- never reached Robo, so the path will be retried next cycle
+        end
+
+        markFishmanPathDone() -- reached Robo: never run this path again for this account
+
+        local spawnOk = false
+        for _ = 1, 3 do
+            if not isRunning then break end
+            spawnOk = setSpawnAtRobo(config.RoboPosition, true)
+            if spawnOk then break end
+            task.wait(1)
+        end
+        if spawnOk then
+            notify("Navigation", "Fishman spawn set!", 3)
+        end
+        return true
+    end
+
+    --------------------------------------------------------------------------
+    -- GEPPO / PELI
+    --------------------------------------------------------------------------
+    -- Peli is the IntValue ReplicatedStorage["Stats" .. <player name>].Stats.Peli
+    local GEPPO_TRAINER = Vector3.new(-3085.8, 94.5, -11755.5)
+    local geppoRetryAt = 0           -- after a purchase that did not take, wait before trying again
+
+    local function getPeli()
+        local peli = 0
+        pcall(function()
+            local v = ReplicatedStorage:FindFirstChild("Stats" .. player.Name)
+            v = v and v:FindFirstChild("Stats")
+            v = v and v:FindFirstChild("Peli")
+            peli = v and tonumber(v.Value) or 0
+        end)
+        return peli
+    end
+
+    -- true when Geppo is wanted, not owned yet, and we can afford it. Peli is checked first
+    -- (cheap); the ownership read only runs once the peli is enough.
+    local function geppoTripWanted()
+        local ag = getgenv().Config.AutoGet
+        if not ag.Geppo or tick() < geppoRetryAt then return false end
+        if getPeli() < (ag.GeppoPeli or 50000) then return false end
+        return not geppoOwned()
+    end
+
+    local function buyGeppo()
+        notify("Navigation", "Routing to Geppo Trainer...", 4)
+        safeMoveTo(GEPPO_TRAINER)
+        task.wait(5)
+        pcall(function() ReplicatedStorage.Events.learnStyle:FireServer("skyWalkTrainer") end)
+        for _ = 1, 3 do              -- give the purchase a moment to show up, then verify it
+            task.wait(1)
+            if geppoOwned(true) then break end
+        end
+        if geppoOwned() then
+            notify("Navigation", "Geppo Purchased!", 3)
+        else
+            geppoRetryAt = tick() + 60
+            notify("Navigation", "Geppo still not owned - will retry in 60s.", 5)
+        end
+    end
+
+    -- Forward-declared: the wall-detecting underwater mover is defined down in the
+    -- World Scroll section. Becky's FIRST trip to the quest NPC borrows it.
+    local wsMoveUnderwater
+
+    local function routeToQuestNPC(config, returning)
+        local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+        if not hrp then return end
+
+        if config.QuestName == "Help Miska" then
+            -- Geppo first ONLY with enough peli (Config.AutoGet.GeppoPeli). Without it we go
+            -- Robo -> Waypoint 1 -> quest below and farm; the farm loop sends us to Geppo
+            -- as soon as the peli is there.
+            --
+            -- Leaving the ATTACK AREA for Geppo goes the way in, reversed (Waypoint 2 -> quest
+            -- NPC -> Waypoint 1), so no wall is in the way of the long tween to the trainer;
+            -- then back to Waypoint 1, and the next cycle takes the quest again from there.
+            if returning and config.Waypoint2 and not gravitoNeedsWaypoint and geppoTripWanted() then
+                notify("Navigation", "Peli reached - leaving the quest area for Geppo...", 4)
+                straightLineTween(config.Waypoint2, TRAVEL_SPEED)
+                straightLineTween(config.NpcPosition, TRAVEL_SPEED)
+                straightLineTween(config.Waypoint1, TRAVEL_SPEED)
+                buyGeppo()
+                straightLineTween(config.Waypoint1, TRAVEL_SPEED)
+                return
+            end
+            -- arriving at the tier (from Rice etc.) with enough peli: Geppo first, then Gravito
+            if not returning and geppoTripWanted() then
+                buyGeppo()
+                -- Geppo bought and the level is already 190+: skip the Gravito spawn/quest steps,
+                -- the main loop walks out to Waypoint 1 and takes the Fishman path
+                if getConfigForLevel(getPlayerLevel()).PathToRobo then return end
+            end
+
+            if gravitoNeedsWaypoint then
+                notify("Navigation", "Gravito Tier: Moving to Robo to set spawn...", 3)
+                local spawnOk = setSpawnAtRobo(config.RoboPosition, nil, config.RoboDoorway)
+                if spawnOk then
+                    spawnedTiers[config.QuestName] = true
+                end
+
+                notify("Navigation", "Moving to Waypoint 1...", 3)
+                safeMoveTo(config.Waypoint1)
+                straightLineTween(config.NpcPosition, TRAVEL_SPEED)
+                -- only stop doing the Robo step once the spawn was actually set; otherwise retry next cycle
+                if spawnOk then gravitoNeedsWaypoint = false end
+            elseif returning and config.Waypoint2 then
+                -- coming back from the attack area: Waypoint 2 -> quest NPC
+                straightLineTween(config.Waypoint2, TRAVEL_SPEED)
+                straightLineTween(config.NpcPosition, TRAVEL_SPEED)
+            else
+                straightLineTween(config.NpcPosition, TRAVEL_SPEED)
+            end
+        else
+            if config.PathToRobo and not hasFishmanPathDone() then
+                runFishmanPath(config)
+            end
+            if config.PathToRobo and returning then
+                -- Fishman, AFTER a completed quest: straight tween back to the quest NPC
+                -- (the first trip there uses the wall-detecting underwater move below)
+                straightLineTween(config.NpcPosition, TRAVEL_SPEED)
+            elseif config.PathToRobo then
+                -- Fishman, FIRST trip: the wall-detecting underwater mover (the same one
+                -- the World Scroll gate leg uses) instead of the blind straight line that
+                -- ground into the island's walls. Only used once actually inside the
+                -- island (below FISHMAN_MAX_Y, -1000); arrival at 4 studs -- the same
+                -- radius the old straight mover accepted, because the NPC's own body
+                -- stops us short of the exact point.
+                local h = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+                if wsMoveUnderwater and h and h.Position.Y < -1000 then
+                    if not wsMoveUnderwater(config.NpcPosition, 4) then
+                        -- gave up (detours exhausted / timed out): last resort, as before
+                        safeMoveTo(config.NpcPosition, true, true)
+                    end
+                else
+                    safeMoveTo(config.NpcPosition, true, true) -- Fishman: ignore Y level, no noclip
+                end
+            elseif returning and config.QuestName == "Help Rice" then
+                -- Rice, AFTER a completed quest only (the first trip, via Robo, is untouched):
+                -- the kill is done at a fixed Y (5.6, underground, noclip), so go back to the
+                -- quest NPC with a straight tween that keeps that same Y.
+                straightLineTween(Vector3.new(config.NpcPosition.X, 5.6, config.NpcPosition.Z), TRAVEL_SPEED)
+            elseif returning and config.ReturnStraightToNpc then
+                -- quest done (Help Poro): straight tween from the fight spot back to the quest NPC
+                straightLineTween(config.NpcPosition, TRAVEL_SPEED)
+            elseif config.FinishStraightRadius then
+                -- NPC under a canopy / overhang (Help PJ):
+                --   [ReturnWaypoint, only coming back from a kill (returning)] straight tween there first
+                --   -> normal travel until within FinishStraightRadius studs horizontally
+                --   -> [ApproachWaypoint] straight tween there first
+                --   -> straight tween (noclip) to the exact spot
+                -- Skipped when already standing at the NPC (the loop calls this again right after
+                -- the return trip, and again at the top of every cycle).
+                local h = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+                if not h or (h.Position - config.NpcPosition).Magnitude > 8 then
+                    if returning and config.ReturnWaypoint then
+                        straightLineTween(config.ReturnWaypoint, TRAVEL_SPEED)
+                    end
+                    safeMoveTo(config.NpcPosition, nil, nil, config.FinishStraightRadius)
+                    if config.ApproachWaypoint then
+                        straightLineTween(config.ApproachWaypoint, TRAVEL_SPEED)
+                    end
+                    straightLineTween(config.NpcPosition, TRAVEL_SPEED)
+                end
+            else
+                safeMoveTo(config.NpcPosition)
+            end
+        end
+    end
+
+    local function equipMelee()
+        pcall(function()
+            local char = player.Character
+            local backpack = player:FindFirstChildOfClass("Backpack")
+            if not char or not backpack then return end
+            if not char:FindFirstChildOfClass("Tool") then
+                for _, tool in ipairs(backpack:GetChildren()) do
+                    if tool:IsA("Tool") then tool.Parent = char break end
+                end
+            end
+        end)
+    end
+
+    local function isValidTargetMob(npc, config)
+        if not npc or not npc:IsA("Model") or not config then return false end
+        local name = string.lower(npc.Name)
+        local targetKey = string.lower(config.TargetMobName)
+        local excludeKey = config.ExcludeKeyword and string.lower(config.ExcludeKeyword) or ""
+
+        if string.find(name, targetKey) then
+            if excludeKey ~= "" and string.find(name, excludeKey) and name ~= "krieg pirate" then return false end
+            local hum = npc:FindFirstChildOfClass("Humanoid")
+            local hrp = npc:FindFirstChild("HumanoidRootPart") or npc.PrimaryPart
+            return hum and hum.Health > 0 and hrp ~= nil
+        end
+        return false
+    end
+
+
+    -- A tier's PRIORITY mob: any of config.PriorityNames present ANYWHERE inside
+    -- the model (recursive). Robert's rocket-launcher marine has a BazookaBack
+    -- model while the weapon is on his back and a BazookaMiddle joint in his hand
+    -- while he holds it; checking only one of them lost him as soon as it moved.
+    local function isPriorityMob(npc, config)
+        if not (config and config.PriorityNames) then return false end
+        for _, nm in ipairs(config.PriorityNames) do
+            if npc:FindFirstChild(nm, true) then return true end
+        end
+        return false
+    end
+
+    local function cleanAggroList(config)
+        for i = #aggroedTargets, 1, -1 do
+            if not isValidTargetMob(aggroedTargets[i], config) then table.remove(aggroedTargets, i) end
+        end
+    end
+
+    local function isAlreadyAggroed(npc)
+        for _, target in ipairs(aggroedTargets) do if target == npc then return true end end
+        return false
+    end
+
+    local function getUnaggroedMob(config)
+        local npcsFolder = Workspace:FindFirstChild("NPCs")
+        if not npcsFolder then return nil end
+        local char = player.Character
+        if not char or not char:FindFirstChild("HumanoidRootPart") then return nil end
+        local myPos = char.HumanoidRootPart.Position
+
+        local bestMob, shortestDist = nil, math.huge
+        local prioMob = nil
+        for _, npc in ipairs(npcsFolder:GetChildren()) do
+            if isValidTargetMob(npc, config) and not isAlreadyAggroed(npc) then
+                local hrp = npc:FindFirstChild("HumanoidRootPart") or npc.PrimaryPart
+                if hrp then
+                    local dist = (myPos - hrp.Position).Magnitude
+                    if dist < shortestDist then shortestDist = dist bestMob = npc end
+                    -- A tier's PRIORITY mob (Robert: the rocket-launcher marine) is
+                    -- pulled whenever it exists, even if it is not the nearest --
+                    -- otherwise it can be left out of the ball by MaxAggro and then
+                    -- never gets targeted first.
+                    if not prioMob and isPriorityMob(npc, config) then
+                        prioMob = npc
+                    end
+                end
+            end
+        end
+        return prioMob or bestMob
+    end
+
+    -- ATTACK -- Tensen's m1 loop (message.txt, "F2 / 20_M1Loops", the melee one),
+    -- replacing fishman_farm's swing(). It runs on its own clock, apart from the
+    -- farm loop (which only decides where the hover sits): every HIT_WAIT it
+    -- takes every live quest mob within COMBAT_RANGE, nearest first, sends a
+    -- "swingsfx" and then ONE "damage" call naming ALL of them, with a CFrame 5
+    -- studs in front of the nearest one, facing it. Combo Punch1, Punch2, Punch3,
+    -- GroundPunch4, then back to 1. Both calls are blocking InvokeServers, as in
+    -- Tensen, so the real gap between swings is HIT_WAIT plus two round-trips.
+    --
+    -- FAKE M1 ON BLOCK (Tensen's farmFeint + targetBlocking): when the target is
+    -- blocking, send the swing alone (no damage call) and leave it for
+    -- FEINT_RETRY seconds before feinting again; it is hit for real the moment
+    -- it drops the block. With it off, blocking targets are skipped instead.
+    --
+    -- M1 BACK AND FORTH: redirects the knockback, it does not move us. The hit
+    -- knocks the mob along the damage CFrame's facing (quest2's Fishman herding
+    -- relied on the same thing), so while fighting each real swing alternates
+    -- that facing along one fixed flat line through the mob -- front, back,
+    -- front -- and the character is turned the same way. The knockbacks cancel
+    -- out and the pack stays under us instead of being punted out of reach.
+    local ATK_CFG = getgenv().Config.Attack or {}
+    local HIT_WAIT = ATK_CFG.HitWait or 0.4
+    local FEINT_ON_BLOCK = ATK_CFG.FeintOnBlock ~= false
+    local FEINT_RETRY = ATK_CFG.FeintRetry or 5
+    -- Tensen's combatRange() with a tween farm on: hover height + 6, never below 15
+    -- the hover height can be set per tier (HoverHeight on the tier config; default HOVER_OFFSET.Y),
+    -- and the combat range follows it
+    local function hoverOffset()
+        local h = activeQuestConfig and activeQuestConfig.HoverHeight
+        return h and Vector3.new(0, h, 0) or HOVER_OFFSET
+    end
+    local function combatRange()
+        return math.max(hoverOffset().Y + 6, 15)
+    end
+    local MELEE_COMBO = {
+        { anim = "Punch1", index = 1 },
+        { anim = "Punch2", index = 2 },
+        { anim = "Punch3", index = 3 },
+        { anim = "GroundPunch4", index = 4 },
+        { anim = "Punch5", index = 5 },   -- Combo5 mode only: the finisher (attack_func_done's "Punch" .. 5)
+    }
+    -- ATTACK MODE. "Tensen" (default): 1-2-3-4 on HitWait, never the finisher.
+    -- "Combo5": attack_func_done's full combo, 1-2-3-4-5, Combo5HitWait between
+    -- hits and Combo5FinisherWait after the finisher. Everything else -- the
+    -- targets, the single damage call, fake m1, back and forth -- is the same.
+    local COMBO5 = ATK_CFG.Mode == "Combo5"
+    local COMBO_MAX = COMBO5 and 5 or 4
+    local COMBO5_HIT_WAIT = ATK_CFG.Combo5HitWait or 0.07
+    local COMBO5_FINISHER_WAIT = ATK_CFG.Combo5FinisherWait or 1.5
+    -- how long to wait after a swing with this combo step before the next one
+    local function waitAfter(stepIndex)
+        if not COMBO5 then return HIT_WAIT end
+        return stepIndex >= 5 and COMBO5_FINISHER_WAIT or COMBO5_HIT_WAIT
+    end
+    local SHUFFLE_ON = ATK_CFG.Shuffle ~= false
+    -- back and forth state: the fixed flat line (set per target), which side the
+    -- next hit comes from, and the way the last hit knocked (the hover engine
+    -- turns the character to face it)
+    local knock = { axis = nil, axisFor = nil, sign = 1 }
+    local facingDir = nil
+    -- the farm loop sets this while it is in its FIGHT phase; the back and forth
+    -- only applies then
+    local fightPhase = false
+
+    -- the farm loop's tuning (the attack itself is all above)
+    local ATK = {
+        GATHER_FLOOR = 3,     -- (unused now: every pulled mob is killed before pulling more)
+        AGGRO_TIMEOUT = 12,   -- give up on a mob we cannot reach after this long
+        TOUR_WAIT = 2.1,      -- hovering over a mob this long without its health dropping still counts it as pulled
+    }
+
+    -- HumanoidRootParts of every live quest mob within `distance`, nearest first.
+    -- (Tensen's list is a fixed set of mob names; here it is the active tier's mob.)
+    local function targetsInRange(distance)
+        local parts = {}
+        local character = player.Character
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        local npcs = Workspace:FindFirstChild("NPCs")
+        if not (npcs and root and activeQuestConfig) then return parts end
+        for _, npc in ipairs(npcs:GetChildren()) do
+            if isValidTargetMob(npc, activeQuestConfig) then
+                local npcRoot = npc:FindFirstChild("HumanoidRootPart")
+                if npcRoot and (npcRoot.Position - root.Position).Magnitude <= distance then
+                    table.insert(parts, npcRoot)
+                end
+            end
+        end
+        if #parts > 1 then
+            local origin = root.Position
+            table.sort(parts, function(a, b)
+                return (a.Position - origin).Magnitude < (b.Position - origin).Magnitude
+            end)
+        end
+        return parts
+    end
+
+    -- Tensen's isNPCBlocking: a Blocking / Block child or a Blocking attribute
+    local function isNPCBlocking(model)
+        if not model or not model.Parent then return false end
+        if model:FindFirstChild("Blocking") or model:FindFirstChild("Block") then return true end
+        local ok, result = pcall(function() return model:GetAttribute("Blocking") end)
+        return ok and result == true
+    end
+
+    -- Tensen's targetBlocking (the BigMom module's, which is the one its farm uses)
+    local BLOCK_ANIM_IDS = {
+        ["15374683054"] = "Big Mama Block",
+        ["95593858663705"] = "Mochi Trident Block (Katakuri)",
+        ["13243427337"] = "Mochi fruit Block",
+    }
+    local function targetBlocking(model)
+        if not (model and model.Parent) then return false end
+        if isNPCBlocking(model) then return true, "a Blocking flag" end
+        local ok, attr = pcall(function() return model:GetAttribute("IsBlocking") end)
+        if ok and attr == true then return true, "IsBlocking" end
+        local humanoid = model:FindFirstChildOfClass("Humanoid")
+        local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
+        if animator then
+            local blockAnim = nil
+            pcall(function()
+                for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+                    local animation = track.Animation
+                    local id = animation and string.match(tostring(animation.AnimationId), "%d+")
+                    if id and BLOCK_ANIM_IDS[id] then
+                        blockAnim = BLOCK_ANIM_IDS[id]
+                        return
+                    end
+                    if animation and string.find(string.lower(animation.Name or ""), "block", 1, true) then
+                        blockAnim = animation.Name
+                        return
+                    end
+                end
+            end)
+            if blockAnim then
+                return true, "the " .. tostring(blockAnim) .. " animation"
+            end
+        end
+        return false
+    end
+
+    -- Tensen's farmFeint: true = do not hit now (the target is blocking: fake swing, then wait FEINT_RETRY)
+    local feintState = setmetatable({}, { __mode = "k" })
+    local feints = 0
+    local function farmFeint(part, index, animation)
+        if not FEINT_ON_BLOCK then return false end
+        local model = part and part.Parent
+        if not model then return false end
+        local blocking, why = targetBlocking(model)
+        if not blocking then
+            if feintState[model] then
+                print(string.format("[quest4] [Feint] '%s' dropped the block after %.1fs - m1ing for real.", tostring(model.Name), tick() - feintState[model].since))
+            end
+            feintState[model] = nil
+            return false
+        end
+        local last = feintState[model]
+        if last and tick() - last.at < FEINT_RETRY then return true end
+        pcall(function()
+            ReplicatedStorage.Events.CombatRegister:InvokeServer({ "swingsfx", "Melee", index, "Ground", false, animation, 2, 1.5 })
+        end)
+        feintState[model] = { at = tick(), since = last and last.since or tick() }
+        feints = feints + 1
+        print(string.format("[quest4] [Feint] '%s' is blocking (%s) - fake m1, no damage. Waiting for the unblock, feinting again in %ds if it holds (x%d).",
+            tostring(model.Name), tostring(why), math.floor(FEINT_RETRY), feints))
+        return true
+    end
+
+    -- Tensen's pickAttackTarget: the first target; with fake m1 off, blocking ones are skipped
+    local function pickAttackTarget(list)
+        for _, part in ipairs(list) do
+            if part and part.Parent then
+                if FEINT_ON_BLOCK or not targetBlocking(part.Parent) then
+                    return part
+                end
+            end
+        end
+        return nil
+    end
+
+    -- The damage CFrame for one swing. Tensen's: 5 studs back from the target
+    -- along the line from us, looking at it. Back and forth (while fighting):
+    -- 5 studs off the target on alternating sides of one fixed flat line, so
+    -- the knockback flips direction every hit.
+    local function damageCFrame(target, root)
+        if not (SHUFFLE_ON and fightPhase) then
+            facingDir = nil
+            local offset = target.Position - root.Position
+            if offset.Magnitude == 0 then
+                offset = root.CFrame.LookVector
+            end
+            return CFrame.new(target.Position - offset.Unit * 5 + Vector3.new(0, 1, 0), target.Position)
+        end
+        if knock.axisFor ~= target or not knock.axis then
+            -- the line: from the target toward us (flat); hovering straight over
+            -- it there is no such line, so the way we are facing is used instead
+            local flat = Vector3.new(root.Position.X - target.Position.X, 0, root.Position.Z - target.Position.Z)
+            if flat.Magnitude < 0.5 then
+                local lv = root.CFrame.LookVector
+                flat = Vector3.new(-lv.X, 0, -lv.Z)
+            end
+            knock.axis = flat.Magnitude > 0.01 and flat.Unit or Vector3.new(0, 0, 1)
+            knock.axisFor = target
+        end
+        local from = target.Position + knock.axis * (knock.sign * 5) + Vector3.new(0, 1, 0)
+        facingDir = -knock.axis * knock.sign -- the way this hit knocks the mob
+        knock.sign = -knock.sign
+        return CFrame.new(from, target.Position)
+    end
+
+    -- impel1's tuning: Tensen's jitter (a random 10-35 ms on top of HitWait, re-rolled every
+    -- second, so the rhythm is never machine-regular; Attack.HitJitter = false turns it off)
+    local hitJitter = 0
+    task.spawn(function()
+        while isRunning do
+            task.wait(1)
+            hitJitter = ATK_CFG.HitJitter == false and 0 or math.random(10, 35) / 1000
+        end
+    end)
+
+    -- impel1's hit tracking: every damage call is checked 0.6s later (did any target lose
+    -- health?) and a summary prints every 30s -- swings, hit %, misses by kind
+    local m1Stats = { swings = 0, hits = 0, blocked = 0, far = 0, other = 0 }
+    local function trackHit(targets, targetPart, root)
+        local st = m1Stats
+        st.swings = st.swings + 1
+        local hums, before = {}, {}
+        for _, part in ipairs(targets) do
+            local h = part and part.Parent and part.Parent:FindFirstChildOfClass("Humanoid")
+            if h then
+                hums[#hums + 1] = h
+                before[h] = h.Health
+            end
+        end
+        local model = targetPart and targetPart.Parent
+        local blocked = false
+        if model then
+            local okB, blk = pcall(targetBlocking, model)
+            blocked = okB and blk or false
+        end
+        local dist = (targetPart and root) and (targetPart.Position - root.Position).Magnitude or 0
+        task.delay(0.6, function()
+            local landed = false
+            for _, h in ipairs(hums) do
+                if h.Parent and (h.Health < before[h] - 0.5 or h.Health <= 0) then
+                    landed = true
+                    break
+                end
+            end
+            if landed then st.hits = st.hits + 1
+            elseif blocked then st.blocked = st.blocked + 1
+            elseif dist > combatRange() then st.far = st.far + 1
+            else st.other = st.other + 1 end
+        end)
+    end
+    task.spawn(function()
+        while isRunning do
+            task.wait(30)
+            local st = m1Stats
+            if st.swings > 0 then
+                print(string.format("[quest6][M1] 30s: %d swings, %d hit (%.0f%%), missed: %d blocked, %d far, %d other | HitWait %.2f",
+                    st.swings, st.hits, 100 * st.hits / st.swings, st.blocked, st.far, st.other, HIT_WAIT))
+            end
+            m1Stats = { swings = 0, hits = 0, blocked = 0, far = 0, other = 0 }
+        end
+    end)
+
+    task.spawn(function()
+        local combo, lastSwing, lastErr, wait_ = 1, 0, 0, HIT_WAIT
+        while isRunning do
+            task.wait()
+            local ok, err = pcall(function()
+                -- only while farming a quest, not while travelling or standing down at Robo
+                if not hasQuest or isTraveling or settlingForSpawn then
+                    combo = 1
+                    return
+                end
+                local character = player.Character
+                -- impel1: no swings while stunned
+                if character and character:FindFirstChild("Stun") then return end
+                if not (character and character:FindFirstChildOfClass("Tool")) then return end
+                if tick() - lastSwing < wait_ then return end
+                local root = character:FindFirstChild("HumanoidRootPart")
+                if not root then return end
+                local targets = targetsInRange(combatRange())
+                if #targets == 0 then
+                    combo = 1
+                    return
+                end
+                local target = pickAttackTarget(targets)
+                if not target then return end -- every target is blocking and fake m1 is off
+                -- impel1: the picked (unblocked) target goes first in the damage call's list too
+                if targets[1] ~= target then
+                    for i, p in ipairs(targets) do
+                        if p == target then
+                            table.remove(targets, i)
+                            break
+                        end
+                    end
+                    table.insert(targets, 1, target)
+                end
+                local step = MELEE_COMBO[combo]
+                local animFolder = ReplicatedStorage:FindFirstChild("CombatAnimations")
+                local meleeFolder = animFolder and animFolder:FindFirstChild("Melee")
+                local animation = meleeFolder and meleeFolder:FindFirstChild(step.anim)
+                if farmFeint(target, step.index, animation) then
+                    lastSwing = tick()
+                    wait_ = HIT_WAIT
+                    return
+                end
+                local events = ReplicatedStorage:FindFirstChild("Events")
+                local remote = events and events:FindFirstChild("CombatRegister")
+                if not remote then return end
+                remote:InvokeServer({ "swingsfx", "Melee", step.index, "Ground", false, animation, 2, 1.5 })
+                trackHit(targets, target, root)
+                remote:InvokeServer({
+                    "damage",
+                    targets,
+                    "Melee",
+                    { step.index, "Ground", "Melee" },
+                    true,
+                    damageCFrame(target, root),
+                    aircombo = "Ground",
+                })
+                lastSwing = tick()
+                wait_ = HIT_WAIT + hitJitter
+                combo = combo + 1
+                if combo > 4 then combo = 1 end
+            end)
+            if not ok and os.clock() - lastErr > 10 then
+                lastErr = os.clock()
+                print("[quest4] m1 step failed: " .. tostring(err))
+            end
+        end
+    end)
+
+    -- Held noclip while farming. A NoNoclip tier skips it entirely and gets its
+    -- collisions put back instead, otherwise this connection would re-zero
+    -- CanCollide every frame and undo everything else.
+    RunService.Stepped:Connect(function()
+        if not (isRunning and hasQuest) then return end
+        if activeQuestConfig and activeQuestConfig.PathToRobo then return end
+
+        if not noclipAllowed() then
+            restoreCollisions()
+            return
+        end
+
+        local char = player.Character
+        if char then
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") then part.CanCollide = false end
+            end
+        end
+    end)
+
+    -- HOVER ENGINE (identical behaviour to attack_func_done; paused while traveling)
+    task.spawn(function()
+        while isRunning do
+            RunService.Heartbeat:Wait()
+            pcall(function()
+                if isTraveling or settlingForSpawn then return end
+                local char = player.Character
+                if not char or not char:FindFirstChild("HumanoidRootPart") then return end
+                local hrp = char.HumanoidRootPart
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                local isKriegTier = activeQuestConfig and string.find(string.lower(activeQuestConfig.TargetMobName), "krieg")
+
+                local bv = hrp:FindFirstChild("HoverBodyVelocity")
+                if not bv then
+                    bv = Instance.new("BodyVelocity")
+                    bv.Name = "HoverBodyVelocity"
+                    bv.MaxForce = Vector3.new(1e9, 1e9, 1e9)
+                    bv.Velocity = Vector3.zero
+                    bv.Parent = hrp
+                end
+
+                hrp.Anchored = false
+                if not hasQuest then bv.Velocity = Vector3.zero return end
+
+                -- FightSpot: hold the fixed point; the mobs come to us and the m1 hits what is in range
+                if fixedHoverPos then
+                    if hum then hum:ChangeState(Enum.HumanoidStateType.Freefall) end
+                    local toSpot = fixedHoverPos - hrp.Position
+                    if toSpot.Magnitude > ARRIVE_THRESHOLD then
+                        bv.Velocity = hoverVelocity(toSpot)
+                    else
+                        bv.Velocity = Vector3.zero
+                        local face = activeTargetHrp and activeTargetHrp.Parent and activeTargetHrp.Position
+                        local flat = face and Vector3.new(face.X, fixedHoverPos.Y, face.Z)
+                        if flat and (flat - fixedHoverPos).Magnitude > 0.5 then
+                            hrp.CFrame = CFrame.lookAt(fixedHoverPos, flat)
+                        else
+                            hrp.CFrame = CFrame.new(fixedHoverPos) * hrp.CFrame.Rotation
+                        end
+                    end
+                    return
+                end
+
+                if activeTargetHrp and activeTargetHrp.Parent and isValidTargetMob(activeTargetHrp.Parent, activeQuestConfig) then
+                    if hum then hum:ChangeState(Enum.HumanoidStateType.Freefall) end
+
+                    local targetPos = isKriegTier and Vector3.new(activeTargetHrp.Position.X, 5.6, activeTargetHrp.Position.Z) or (activeTargetHrp.Position + hoverOffset())
+                    local toTarget = (targetPos - hrp.Position)
+
+                    if toTarget.Magnitude > ARRIVE_THRESHOLD then
+                        -- Proportional, not a flat BASE_SPEED: a fixed 45 studs/s at 3 studs out
+                        -- overshoots and oscillates, which is the jitter that also makes swings miss.
+                        bv.Velocity = hoverVelocity(toTarget)
+                        hrp.CFrame = CFrame.lookAt(hrp.Position, activeTargetHrp.Position)
+                    else
+                        bv.Velocity = Vector3.zero
+                        if activeQuestConfig and activeQuestConfig.FaceDown then
+                            -- face straight down at the mob; the head points the way the last
+                            -- hit knocked (or keeps its current heading) so it doesn't spin
+                            local head = facingDir or hrp.CFrame.UpVector
+                            head = Vector3.new(head.X, 0, head.Z)
+                            if head.Magnitude < 0.1 then head = Vector3.new(hrp.CFrame.LookVector.X, 0, hrp.CFrame.LookVector.Z) end
+                            if head.Magnitude < 0.1 then head = Vector3.zAxis end
+                            hrp.CFrame = CFrame.lookAt(targetPos, targetPos - Vector3.yAxis, head.Unit)
+                        elseif fightPhase and facingDir then
+                            -- M1 back and forth: face the way the last hit knocked (front / back)
+                            hrp.CFrame = CFrame.lookAt(targetPos, targetPos + facingDir)
+                        else
+                            hrp.CFrame = CFrame.lookAt(targetPos, activeTargetHrp.Position)
+                        end
+                    end
+                else
+                    bv.Velocity = Vector3.zero
+                end
+            end)
+        end
+        stopHoverPhysics()
+    end)
+
+    -- GEPPO DURING THE NORMAL TWEEN (safeMoveTo, incl. the legacy / Fishman mover it hands off
+    -- to) AND WHILE KILLING (hovering on a mob or holding the fight spot): cast every 2s whatever
+    -- we are doing. Straight tweens and the underwater gate move do not cast. <= 3s keeps the
+    -- flight-strike check quiet.
+    local TRAVEL_GEPPO_EVERY = 2
+    -- castGeppo itself is local to the TWN block; out here it is TWN.castGeppo (calling the bare
+    -- name threw "attempt to call a nil value" and both accounts were banned ~1s later, so the
+    -- whole step is pcall'd: an error must never reach the game's log)
+    task.spawn(function()
+        while isRunning do
+            task.wait(TRAVEL_GEPPO_EVERY)
+            pcall(function()
+                -- killing = the hover engine is holding us over a mob / the fight spot
+                local killing = hasQuest and not isTraveling and not settlingForSpawn
+                    and (fixedHoverPos ~= nil or (activeTargetHrp ~= nil and activeTargetHrp.Parent ~= nil))
+                if not (normalTweening or killing) then return end
+                local c = player.Character
+                local r = c and c:FindFirstChild("HumanoidRootPart")
+                local h = c and c:FindFirstChildOfClass("Humanoid")
+                if r and h and h.Health > 0 and TWN and TWN.castGeppo then
+                    TWN.castGeppo(c, r, Vector3.zero)
+                end
+            end)
+        end
+    end)
+
+    -- QUEST ACTIVE CHECK: asks the server for quest locations; no quest = nothing useful comes back.
+    -- Returns true (has quest), false (no quest), or nil (call failed - unknown, change nothing).
+    local function playerHasQuest()
+        local ok, result = pcall(function()
+            return ReplicatedStorage:WaitForChild("Events"):WaitForChild("Quest"):InvokeServer("getNPCQuestLocations")
+        end)
+        if not ok then
+            return nil
+        end
+        if result == nil or result == false then return false end
+        if type(result) == "table" then return next(result) ~= nil end
+        return true
+    end
+
+    -- Runs separately so a slow/hanging remote can never freeze the attack loop.
+    task.spawn(function()
+        while isRunning do
+            task.wait(1)
+            if hasQuest and not isTraveling and (tick() - questTakenAt) > 3 then
+                local active = playerHasQuest()
+                if active == false then
+                    questMissCount = questMissCount + 1
+                    if questMissCount >= 2 then -- two misses in a row = quest really finished
+                        notify("Auto Farm", "Quest complete - returning to NPC.", 2)
+                        hasQuest = false
+                    end
+                elseif active == true then
+                    questMissCount = 0
+                end
+            end
+        end
+    end)
+
+    --------------------------------------------------------------------------
+    -- WORLD SCROLL (after the Fishman tier)
+    -- gate (hover) -> hover off 2s -> waypoint -> normal tween to the scroll -> grab -> teleport
+    --------------------------------------------------------------------------
+    local WS_GATE       = Vector3.new(8578.9, -2138.6, -17089.3)  -- touch it: teleports you off Fishman Island
+    local WS_WAYPOINT   = Vector3.new(1834.9, 7.5, -12072.6)  -- first stop after leaving Fishman Island, so no wall blocks the way
+    local WS_SCROLL_POS = Vector3.new(-7345.9, 3.3, -14950.3)
+    local FISHMAN_MAX_Y = -1000    -- below this we are still inside Fishman Island
+    local scrollTeleportQueued = false
+    local lastPromptScan = 0
+
+    local function wsConfig()
+        return getgenv().Config.WorldScroll or {}
+    end
+
+    -- on the Fishman tier (so the Geppo / Gravito hold-back is respected) and at the target level
+    local function worldScrollWanted()
+        local ws = wsConfig()
+        if not ws.Enabled then return false end
+        local lvl = getPlayerLevel()
+        if lvl < (ws.Level or 325) then return false end
+        return getConfigForLevel(lvl).PathToRobo ~= nil
+    end
+
+    -- Inventory is a StringValue holding JSON: ReplicatedStorage.Stats<name>.Inventory.Inventory
+    local function hasWorldScroll()
+        local owned = false
+        pcall(function()
+            local stats = ReplicatedStorage:FindFirstChild("Stats" .. player.Name)
+            local inv = stats and stats:FindFirstChild("Inventory")
+            inv = inv and inv:FindFirstChild("Inventory")
+            if not inv or type(inv.Value) ~= "string" then return end
+            local okJ, data = pcall(function() return HttpService:JSONDecode(inv.Value) end)
+            if okJ and type(data) == "table" then
+                owned = (tonumber(data["World Scroll"]) or 0) > 0
+            else
+                owned = (tonumber(inv.Value:match('"World Scroll"%s*:%s*(%d+)')) or 0) > 0
+            end
+        end)
+        return owned
+    end
+
+    local function posOf(inst)
+        if not inst then return nil end
+        if inst:IsA("BasePart") then return inst.Position end
+        if inst:IsA("Attachment") then return inst.WorldPosition end
+        if inst:IsA("Model") then return inst:GetPivot().Position end
+    end
+
+    -- Workspace.Effects["World Scroll"].ProximityPrompt (found with the test script). Only if that
+    -- path is missing do we scan the whole workspace, and not more than once every 15s.
+    local function findScrollPrompt()
+        local effects = Workspace:FindFirstChild("Effects")
+        local holder = effects and effects:FindFirstChild("World Scroll")
+        local prompt = holder and holder:FindFirstChildWhichIsA("ProximityPrompt", true)
+        if prompt then return prompt end
+        if tick() - lastPromptScan < 15 then return nil end
+        lastPromptScan = tick()
+        for _, d in ipairs(Workspace:GetDescendants()) do
+            if d:IsA("ProximityPrompt") and string.lower(d.ObjectText) == "world scroll" then return d end
+        end
+        return nil
+    end
+
+    -- 1 = hold the prompt (worked in the test), 2 = fireproximityprompt, 3 = real key press
+    local function grabScrollOnce(prompt, method)
+        local hold = (prompt.HoldDuration or 0) + 0.15
+        if method == 1 then
+            prompt:InputHoldBegin()
+            task.wait(hold)
+            prompt:InputHoldEnd()
+        elseif method == 2 then
+            if fireproximityprompt then fireproximityprompt(prompt) end
+        else
+            VIM:SendKeyEvent(true, prompt.KeyboardKeyCode, false, game)
+            task.wait(hold)
+            VIM:SendKeyEvent(false, prompt.KeyboardKeyCode, false, game)
+        end
+    end
+
+    local function myRoot()
+        return player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+    end
+
+    local function inFishmanIsland()
+        local hrp = myRoot()
+        return hrp ~= nil and hrp.Position.Y < FISHMAN_MAX_Y
+    end
+
+    local function waitForAliveCharacter()
+        repeat
+            task.wait(0.25)
+            local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+        until not isRunning or (hum and hum.Health > 0 and myRoot())
+    end
+
+    -- Underwater move for the gate leg. NO noclip: collisions stay on and walls are DETECTED.
+    -- It flies a straight 3D line (the old underwater mover's job) but every frame sweeps a
+    -- sphere ahead of the body. A wall in the way is climbed with BossRotation's climb (the same
+    -- TWN functions and numbers the surface tween uses): rise to the top of what is in front,
+    -- forward only once the front is clear, lean back off an overhang, geppo every 0.25s, and
+    -- sidestep around anything it cannot get over. The last 12 studs go straight in, because the
+    -- gate itself is the thing we are trying to touch. Returns true on arrival.
+    function wsMoveUnderwater(destination, arriveAt)
+        isTraveling = true
+        local char = player.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if not hrp or not hum then isTraveling = false return false end
+
+        -- clear our own movers, but leave the game's disabled climb constraints alone
+        for _, obj in ipairs(hrp:GetChildren()) do
+            if obj:IsA("BodyMover") then
+                obj:Destroy()
+            elseif obj:IsA("Constraint") then
+                local okE, enabled = pcall(function() return obj.Enabled end)
+                if (not okE) or enabled then obj:Destroy() end
+            end
+        end
+        restoreCollisions(char)
+
+        local C = TWN.C
+        local PROBE = 8
+        local speed = TRAVEL_SPEED
+        local swimWasEnabled = true
+        pcall(function()
+            swimWasEnabled = hum:GetStateEnabled(Enum.HumanoidStateType.Swimming)
+            hum:SetStateEnabled(Enum.HumanoidStateType.Swimming, false)   -- buoyancy would push us up
+            hum.PlatformStand = true
+            -- NOT ChangeState(Physics): the game's RagdollHandler ragdolls the character in it
+        end)
+
+        local function wsLog(fmt, ...)
+            local okF, msg = pcall(string.format, "[TWN] " .. fmt, ...)
+            print(okF and msg or ("[TWN] " .. tostring(fmt)))
+        end
+
+        local climb = nil
+        local detourTarget, detourUntil, detourSide, detourCount, lastDetourAt = nil, 0, 1, 0, 0
+        local stallTries = 0
+
+        -- false when the detours have run out and the move is given up
+        local function startDetour(dir, why)
+            if detourTarget and os.clock() < detourUntil then return true end
+            if os.clock() - lastDetourAt < 1.0 then return true end
+            lastDetourAt = os.clock()
+            detourCount = detourCount + 1
+            climb = nil
+            if detourCount > C.MAX_DETOURS then
+                wsLog("blocked after %d detours - giving up this move", detourCount - 1)
+                return false
+            end
+            detourSide = -detourSide
+            local perp = Vector3.new(-dir.Z, 0, dir.X) * detourSide
+            if perp.Magnitude < 0.01 then perp = Vector3.new(1, 0, 0) end
+            detourTarget = hrp.Position + perp.Unit * (C.DETOUR_BASE * math.min(detourCount, 4))
+            detourUntil = os.clock() + C.DETOUR_TIME
+            wsLog("%s - stepping %s around it (detour %d)", why, detourSide > 0 and "right" or "left", detourCount)
+            return true
+        end
+
+        local function startClimb(dir)
+            TWN.refreshFilter()
+            local pos = hrp.Position
+            local front = TWN.obstacleTop(pos, dir)
+            climb = {
+                targetY = math.max(front or pos.Y, pos.Y) + C.CLIMB_CLEAR, dir = dir,
+                started = os.clock(), bestY = pos.Y, bestAt = os.clock(),
+                lastGeppo = 0, backoffFrom = nil, loggedBackoff = false,
+            }
+            wsLog("wall ahead%s - geppo climbing to Y %.1f",
+                front and string.format(" (blocked up to Y %.1f)", front) or "", climb.targetY)
+        end
+
+        -- one frame of the climb: "climbing" | "done" | "abort"
+        local function climbStep(dt)
+            local pos, dir, now = hrp.Position, climb.dir, os.clock()
+            local done = pos.Y >= climb.targetY
+
+            if pos.Y > climb.bestY + C.CEILING_RISE then
+                climb.bestY, climb.bestAt = pos.Y, now
+            elseif (not done) and now - climb.bestAt > C.CEILING_STALL then
+                return startDetour(dir, string.format("ceiling at Y %.1f", pos.Y)) and "done" or "abort"
+            end
+
+            if (not done) and TWN.headroom(char, hrp) < C.HEAD_BLOCKED then
+                climb.backoffFrom = climb.backoffFrom or pos
+                local backed = Vector3.new(pos.X - climb.backoffFrom.X, 0, pos.Z - climb.backoffFrom.Z).Magnitude
+                if backed >= C.CLIMB_BACKOFF_MAX then
+                    return startDetour(dir, string.format("no headroom at Y %.1f", pos.Y)) and "done" or "abort"
+                end
+                local vel = -dir * C.CLIMB_BACKOFF_SPEED
+                local nextPos = pos + vel * dt
+                hrp.CFrame = CFrame.lookAt(nextPos, nextPos + dir)
+                hrp.AssemblyLinearVelocity = vel
+                climb.bestAt = now   -- not rising is deliberate here
+                if now - climb.lastGeppo >= C.GEPPO_CLIMB_INTERVAL then
+                    climb.lastGeppo = now
+                    TWN.castGeppo(char, hrp, dir)
+                end
+                return "climbing"
+            end
+            climb.backoffFrom = nil
+
+            if done then
+                wsLog("cleared it at Y %.1f, resuming", pos.Y)
+                climb = nil
+                return "done"
+            end
+            if now - climb.started > C.MAX_CLIMB_TIME then
+                wsLog("climb gave up at Y %.1f (wanted %.1f)", pos.Y, climb.targetY)
+                return startDetour(dir, "climb timed out") and "done" or "abort"
+            end
+
+            local room = TWN.headroom(char, hrp)
+            local rise = C.CLIMB_RISE_SPEED
+            if room < rise * (1 / 60) then rise = room * 60 end
+            local fwd = C.CLIMB_FORWARD_SPEED
+            local okS, frontHit = pcall(function()
+                return Workspace:Spherecast(pos, C.FRONT_RADIUS, dir * 4, TWN.rayParams)
+            end)
+            if okS and frontHit then fwd = 0 end
+            local total = math.sqrt(rise * rise + fwd * fwd)
+            if total > C.SPEED then rise = rise * (C.SPEED / total) end
+            local vel = Vector3.new(dir.X * fwd, rise, dir.Z * fwd)
+            hrp.CFrame = CFrame.lookAt(pos + vel * dt, pos + vel * dt + dir)
+            hrp.AssemblyLinearVelocity = vel
+            if now - climb.lastGeppo >= C.GEPPO_CLIMB_INTERVAL then
+                climb.lastGeppo = now
+                TWN.castGeppo(char, hrp, dir)
+            end
+            return "climbing"
+        end
+
+        local startedAt = os.clock()
+        local budget = math.max(30, ((destination - hrp.Position).Magnitude / speed) * 1.6 + 20)
+        local bestDist, bestAt = (destination - hrp.Position).Magnitude, os.clock()
+        local lastFilter = 0
+        local reached = false
+
+        TWN.refreshFilter()
+        while isRunning and isTraveling do
+            local dt = RunService.Heartbeat:Wait()
+            if not char.Parent or hum.Health <= 0 then break end
+
+            local pos = hrp.Position
+            local toDest = destination - pos
+            local dist = toDest.Magnitude
+            if dist <= (arriveAt or 1.5) then reached = true break end
+            -- The gate teleports us off the island the moment it is TOUCHED, which is before the
+            -- exact destination point. Without this stop the move carried on after the teleport,
+            -- flying from the surface at the gate's coordinates (Y -2138, thousands of studs away):
+            -- a dive underwater (with wall climbs on the way) until the time budget ran out.
+            if destination.Y < FISHMAN_MAX_Y and pos.Y > FISHMAN_MAX_Y then
+                wsLog("left Fishman Island mid-move (the gate teleported us) - stopping here")
+                reached = true
+                break
+            end
+            if os.clock() - startedAt > budget then
+                wsLog("underwater move timed out with %.0f studs left", dist)
+                break
+            end
+            if os.clock() - lastFilter > 0.5 then lastFilter = os.clock() TWN.refreshFilter() end
+
+            local flat = Vector3.new(toDest.X, 0, toDest.Z)
+            local flatDir = flat.Magnitude > 0.05 and flat.Unit
+                or Vector3.new(hrp.CFrame.LookVector.X, 0, hrp.CFrame.LookVector.Z)
+            if flatDir.Magnitude < 0.01 then flatDir = Vector3.new(1, 0, 0) end
+
+            -- a climb in progress owns the frame
+            if climb then
+                if climbStep(dt) == "abort" then break end
+                continue
+            end
+
+            -- steer at the sidestep point while a detour is active (arrival is still judged on the real target)
+            local aim = destination
+            if detourTarget then
+                local toSide = Vector3.new(detourTarget.X - pos.X, 0, detourTarget.Z - pos.Z)
+                if toSide.Magnitude <= 5.5 or os.clock() > detourUntil then
+                    detourTarget = nil
+                    bestDist, bestAt = dist, os.clock()
+                    wsLog("  back on course")
+                else
+                    aim = Vector3.new(detourTarget.X, pos.Y, detourTarget.Z)
+                end
+            end
+            local toAim = aim - pos
+            if toAim.Magnitude < 0.05 then detourTarget = nil continue end
+            local dir3 = toAim.Unit
+            local step = math.min(speed * dt, toAim.Magnitude)
+
+            -- stall backstop: not getting closer for a while means something is in the way
+            if dist < bestDist - 2.0 then
+                bestDist, bestAt = dist, os.clock()
+                stallTries = 0
+            elseif (not detourTarget) and dist > 12 and os.clock() - bestAt > 1.2 then
+                bestAt = os.clock()
+                stallTries = stallTries + 1
+                if stallTries <= 3 then
+                    startClimb(flatDir)
+                elseif not startDetour(flatDir, "stalled") then
+                    break
+                end
+                continue
+            end
+
+            -- wall detection: sweep a sphere along the way we are about to move
+            if dist > 12 then
+                local okP, hit = pcall(function()
+                    return Workspace:Spherecast(pos, C.FRONT_RADIUS, dir3 * PROBE, TWN.rayParams)
+                end)
+                if okP and hit and hit.Distance <= step + 2.5 then
+                    local hDir = Vector3.new(dir3.X, 0, dir3.Z)
+                    if hDir.Magnitude > 0.1 and TWN.obstacleTop(pos, hDir.Unit) then
+                        startClimb(hDir.Unit)   -- a wall: climb over it
+                        continue
+                    end
+                    -- floor or ceiling, not a wall: slide along it, keep the horizontal part of the heading
+                    if hDir.Magnitude > 0.05 then
+                        dir3 = hDir.Unit
+                        step = math.min(speed * dt, hDir.Magnitude)
+                    else
+                        step = 0
+                    end
+                end
+            end
+
+            if step > 0 then
+                local nextPos = pos + dir3 * step
+                local flatLook = Vector3.new(dir3.X, 0, dir3.Z)
+                if flatLook.Magnitude < 0.01 then flatLook = hrp.CFrame.LookVector end
+                hrp.CFrame = CFrame.lookAt(nextPos, nextPos + flatLook)
+            end
+            hrp.AssemblyLinearVelocity = Vector3.zero
+        end
+
+        pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero end)
+        pcall(function()
+            hum.PlatformStand = false
+            hum:SetStateEnabled(Enum.HumanoidStateType.Swimming, swimWasEnabled)
+            hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+        end)
+        isTraveling = false
+        return reached
+    end
+
+    -- Wall-detecting tween to the gate, then hover on it (the hover engine keeps us there) until
+    -- the teleport takes us out of Fishman Island. If it does not fire, wobble through the gate again.
+    local function leaveFishmanIsland()
+        for attempt = 1, 4 do
+            if not isRunning then return false end
+            if not inFishmanIsland() then return true end
+            notify("World Scroll", string.format("Heading for the Fishman gate (try %d/4)...", attempt), 3)
+            if not wsMoveUnderwater(WS_GATE) then       -- no noclip: detects walls and climbs them, then hover there
+                task.wait(1)
+                continue
+            end
+
+            local t0 = os.clock()
+            while os.clock() - t0 < 10 do
+                if not isRunning then return false end
+                if not inFishmanIsland() then return true end
+                task.wait(0.25)
+            end
+
+            restoreCollisions()
+            wsMoveUnderwater(WS_GATE + Vector3.new(4, 0, 0))
+            wsMoveUnderwater(WS_GATE)
+        end
+        return not inFishmanIsland()
+    end
+
+    local function teleportToSecondPlace()
+        local ws = wsConfig()
+        local placeId = ws.PlaceId or 1730877806
+
+        if not scrollTeleportQueued then
+            local code = ws.RequeueCode
+            local queue = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
+            if code and code ~= "" and queue then
+                scrollTeleportQueued = pcall(queue, code)
+            end
+        end
+
+        TeleportService.TeleportInitFailed:Connect(function(_, result, msg)
+            print("[quest4] teleport failed: " .. tostring(result) .. " " .. tostring(msg))
+        end)
+
+        notify("World Scroll", "Teleporting to place " .. tostring(placeId) .. "...", 5)
+        for _ = 1, 20 do
+            if not isRunning then return end
+            pcall(function() TeleportService:Teleport(placeId, player) end)
+            task.wait(20)   -- a successful teleport ends this script; otherwise try again
+        end
+    end
+
+    local function runWorldScrollStep()
+        hasQuest, activeTargetHrp, fightPhase, diedWhileFarming = false, nil, false, false
+        aggroedTargets = {}
+        waitForAliveCharacter()
+        pcall(function() ReplicatedStorage.Events.Quest:InvokeServer({ "quit" }) end)
+
+        local ok, err = pcall(function()
+            if not hasWorldScroll() then
+                -- 1) out of Fishman Island through the gate
+                if inFishmanIsland() then
+                    if not leaveFishmanIsland() then return end
+                    -- 2) hover off for 2 seconds so it cannot interfere with the teleport
+                    settlingForSpawn = true
+                    task.wait(0.1)
+                    stopHoverPhysics()
+                    task.wait(2)
+
+                    -- 2b) normal tween to the waypoint first, so no wall is in the way
+                    notify("World Scroll", "Moving to the waypoint first...", 3)
+                    for _ = 1, 3 do
+                        if not isRunning then return end
+                        local h = myRoot()
+                        if h and (h.Position - WS_WAYPOINT).Magnitude <= 10 then break end
+                        safeMoveTo(WS_WAYPOINT)
+                        task.wait(0.5)
+                    end
+                end
+                settlingForSpawn = true     -- hover and m1 stay off until we are done
+
+                -- 3) normal tween to the World Scroll
+                notify("World Scroll", "Moving to the World Scroll...", 3)
+                for _ = 1, 3 do
+                    if not isRunning then return end
+                    local hrp = myRoot()
+                    if hrp and (hrp.Position - WS_SCROLL_POS).Magnitude <= 8 then break end
+                    safeMoveTo(WS_SCROLL_POS)
+                    task.wait(0.5)
+                end
+
+                -- 4) grab it; if it has not spawned yet, wait until it does (inventory is the check)
+                local lastNote = 0
+                while isRunning and not hasWorldScroll() do
+                    local hrp = myRoot()
+                    if not hrp or inFishmanIsland() then return end   -- died / respawned underwater: start over
+
+                    local prompt = findScrollPrompt()
+                    if not prompt or not prompt.Enabled then
+                        if tick() - lastNote > 30 then
+                            lastNote = tick()
+                            notify("World Scroll", "Waiting for the World Scroll to spawn (about 5 min after a server starts)...", 4)
+                        end
+                        task.wait(2)
+                    else
+                        local pos = posOf(prompt.Parent)
+                        if pos and (pos - hrp.Position).Magnitude > 8 then
+                            safeMoveTo(pos)
+                            task.wait(0.3)
+                        else
+                            for method = 1, 3 do
+                                if not isRunning or hasWorldScroll() then break end
+                                if not (method == 2 and not fireproximityprompt) then
+                                    pcall(grabScrollOnce, prompt, method)
+                                    local t0 = os.clock()
+                                    while os.clock() - t0 < 2.5 and not hasWorldScroll() do task.wait(0.1) end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+
+            if isRunning and hasWorldScroll() then
+                notify("World Scroll", "World Scroll is in the inventory!", 3)
+                print("[quest4] World Scroll confirmed in inventory")
+                task.wait(1)
+                -- 5) on to place 2 (its sequence picks the private server and Second Sea)
+                teleportToSecondPlace()
+            end
+        end)
+
+        if not ok then print("[quest4] world scroll step error: " .. tostring(err)) end
+        settlingForSpawn = false
+    end
+
+    task.spawn(function()
+        notify("Auto Farm", "Multi-Quest Auto Level Started on " .. player.Name, 3)
+        task.wait(1)
+
+        while isRunning do
+            activeQuestConfig = getConfigForLevel(getPlayerLevel())
+
+            -- Level reached on the Fishman tier: gate -> World Scroll -> teleport to place 2
+            if worldScrollWanted() then
+                runWorldScrollStep()
+                task.wait(1)
+                continue
+            end
+            
+            -- Tiers with a Robo to set spawn at (Rice): go to ROBO FIRST, then the quest NPC
+            -- (it used to go to the NPC first and only then walk back to Robo). Gravito
+            -- (Miska) and the Fishman path set their spawn inside routeToQuestNPC instead.
+            local needsRoboFirst = activeQuestConfig.RoboPosition
+                and not activeQuestConfig.PathToRobo
+                and activeQuestConfig.QuestName ~= "Help Miska"
+                and not spawnedTiers[activeQuestConfig.QuestName]
+
+            if needsRoboFirst then
+                notify("Navigation", "Moving to Robo to set spawn...", 3)
+                if setSpawnAtRobo(activeQuestConfig.RoboPosition, nil, activeQuestConfig.RoboDoorway) then
+                    spawnedTiers[activeQuestConfig.QuestName] = true
+                    notify("Navigation", "Spawn set successfully!", 2)
+                end
+                -- Robo is inside a room: back out through the door, THEN to the quest
+                -- NPC, and only then take the quest (it used to be taken from in there).
+                leaveRoboRoom(activeQuestConfig)    -- straight tween out of the room
+                routeToQuestNPC(activeQuestConfig)
+                task.wait(0.5)
+            else
+                routeToQuestNPC(activeQuestConfig)
+                task.wait(0.5)
+            end
+
+            -- Level check after routing (Geppo may just have been bought): on Gravito with Geppo owned
+            -- and the level at the Fishman tier, do NOT take the Gravito quest. Out to Waypoint 1
+            -- first, then the next cycle starts the Fishman path.
+            if activeQuestConfig.QuestName == "Help Miska" and getConfigForLevel(getPlayerLevel()).PathToRobo then
+                notify("Navigation", "Geppo owned and level reached - leaving Gravito for Fishman Island...", 3)
+                straightLineTween(activeQuestConfig.Waypoint1, TRAVEL_SPEED)
+                continue
+            end
+
+            pcall(function()
+                ReplicatedStorage.Events.Quest:InvokeServer({ "takequest", activeQuestConfig.QuestName })
+            end)
+            if activeQuestConfig.Waypoint2 then
+                task.wait(0.3)
+                straightLineTween(activeQuestConfig.Waypoint2, TRAVEL_SPEED)
+            end
+            -- PJ: out from under the tree the same way we came in after a kill, THEN the hover
+            -- engine takes us to the wolves
+            if activeQuestConfig.ReturnWaypointAfterTake and activeQuestConfig.ReturnWaypoint then
+                task.wait(0.3)
+                print("[quest6] quest taken - straight tween to the return waypoint first")
+                straightLineTween(activeQuestConfig.ReturnWaypoint, TRAVEL_SPEED)
+            end
+            diedWhileFarming = false
+            hasQuest = true
+            questTakenAt = tick()
+            questMissCount = 0
+            task.wait(0.5)
+
+            -- Attack state for this quest. The hitting is Tensen's m1 loop (above), on
+            -- its own clock; this loop only decides where the hover sits:
+            --   GATHER: tour the fresh mobs one at a time (a tier's priority mob
+            --           first) until this tier's MaxAggro are pulled or none are
+            --           left. Each counts as pulled once its health drops (the m1
+            --           loop hits it while we hover over it), or after TOUR_WAIT
+            --           of hovering over it.
+            --   FIGHT:  hover on the FIRST mob that was pulled and is still alive --
+            --           or, while it lives, the tier's priority mob (Robert: the
+            --           marine with the bazooka) -- with Tensen's M1 back and forth on
+            --           the hover point. When it dies, the next one in pull order.
+            local phase = "GATHER"
+            local aggroTarget, aggroStart, tourArrivedAt, tourHp = nil, 0, nil, nil
+            local lockedMob = nil
+            local lastRestock, lastHousekeep, lastGeppoCheck, lastTierCheck = 0, 0, 0, 0
+            local lastScrollCheck = 0
+            local leavingForScroll = false
+            fightPhase = false
+
+            while isRunning and hasQuest do
+                if diedWhileFarming then
+                    if activeQuestConfig.Waypoint2 then
+                        repeat
+                            task.wait(0.25)
+                            local c = player.Character
+                            local h = c and c:FindFirstChildOfClass("Humanoid")
+                        until not isRunning or (h and h.Health > 0 and c:FindFirstChild("HumanoidRootPart"))
+                        task.wait(1)
+                        diedWhileFarming = false
+                        hasQuest = false
+                        break
+                    end
+
+                    -- Rice: the spawn point is Robo, which is INSIDE a room. After a death
+                    -- we respawn in there, so walk out through the door FIRST instead of
+                    -- letting the hover engine fly straight at the mobs from inside it.
+                    -- settlingForSpawn pauses the hover engine and the m1 loop meanwhile.
+                    if activeQuestConfig.RoboDoorway and activeQuestConfig.RoboPosition then
+                        settlingForSpawn = true
+                        repeat
+                            task.wait(0.25)
+                            local c = player.Character
+                            local h = c and c:FindFirstChildOfClass("Humanoid")
+                        until not isRunning or (h and h.Health > 0 and c:FindFirstChild("HumanoidRootPart"))
+                        task.wait(1)
+
+                        -- only if we really respawned in the room (spawn set at Robo): tween out
+                        if isRunning then leaveRoboRoom(activeQuestConfig) end
+                        settlingForSpawn = false
+                    end
+
+                    -- RespawnTravelToMob: back to the mobs with the NORMAL travel tween
+                    -- (safeMoveTo / TWN) until near the nearest live one; only then does the
+                    -- attack hover take over. settlingForSpawn keeps the hover and m1 paused.
+                    -- died at the fight spot: travel back to the pack and straight tween to the spot again
+                    fixedHoverPos = nil
+                    if activeQuestConfig.RespawnTravelToMob then
+                        settlingForSpawn = true
+                        repeat
+                            task.wait(0.25)
+                            local c = player.Character
+                            local h = c and c:FindFirstChildOfClass("Humanoid")
+                        until not isRunning or (h and h.Health > 0 and c:FindFirstChild("HumanoidRootPart"))
+                        local NEAR = 20   -- flat studs from the mob that count as "near"
+                        for _ = 1, 3 do
+                            if not isRunning then break end
+                            local c = player.Character
+                            local myRoot = c and c:FindFirstChild("HumanoidRootPart")
+                            local npcs = Workspace:FindFirstChild("NPCs")
+                            if not (myRoot and npcs) then break end
+                            local best, bestDist = nil, math.huge
+                            for _, npc in ipairs(npcs:GetChildren()) do
+                                if isValidTargetMob(npc, activeQuestConfig) then
+                                    local r = npc:FindFirstChild("HumanoidRootPart") or npc.PrimaryPart
+                                    if r then
+                                        local d = (r.Position - myRoot.Position).Magnitude
+                                        if d < bestDist then best, bestDist = r, d end
+                                    end
+                                end
+                            end
+                            if not best then break end
+                            local flat = Vector3.new(best.Position.X - myRoot.Position.X, 0, best.Position.Z - myRoot.Position.Z)
+                            if flat.Magnitude <= NEAR then break end
+                            print(string.format("[quest6] respawned - normal tween to %s (%.0f studs)", best.Parent.Name, bestDist))
+                            safeMoveTo(best.Position, nil, nil, true)
+                        end
+                        settlingForSpawn = false
+                    end
+
+                    diedWhileFarming = false
+                end
+
+                if tick() - lastHousekeep >= 0.25 then    -- not every frame: keeps the frame rate smooth
+                    lastHousekeep = tick()
+                    equipMelee()
+                    cleanAggroList(activeQuestConfig)
+                end
+
+                -- Gravito tier without Geppo: once the peli is there, leave the quest area. The code
+                -- after this loop does the trip (Waypoint 2 -> quest NPC -> Waypoint 1 -> Geppo -> Waypoint 1).
+                if activeQuestConfig.QuestName == "Help Miska" and tick() - lastGeppoCheck >= 3 then
+                    lastGeppoCheck = tick()
+                    if geppoTripWanted() then
+                        hasQuest = false     -- out of the loop; routeToQuestNPC(cfg, true) below does the trip
+                        break
+                    end
+                end
+
+                -- Rice: the moment the level moves past the tier (165+), stop farming and go back
+                -- to the Rice quest NPC FIRST (straight tween at the farm's fixed Y); the code after
+                -- this loop then quits the quest and the next cycle heads for Gravito.
+                -- (sea 2 tiers carry LeaveOnTierChange and take the same exit)
+                if (activeQuestConfig.QuestName == "Help Rice" or activeQuestConfig.LeaveOnTierChange) and tick() - lastTierCheck >= 3 then
+                    lastTierCheck = tick()
+                    if getConfigForLevel(getPlayerLevel()).QuestName ~= activeQuestConfig.QuestName then
+                        notify("Auto Farm", "Level reached - back to the quest NPC first...", 3)
+                        hasQuest = false
+                        break
+                    end
+                end
+
+                -- Gravito: the moment the level reaches the Fishman tier (190+) with Geppo owned, stop
+                -- farming. The code after this loop walks out (Waypoint 2 -> quest NPC -> Waypoint 1)
+                -- before the Fishman path starts. Only the Fishman tier triggers it, so a failed level
+                -- read cannot pull us out of Gravito.
+                if activeQuestConfig.QuestName == "Help Miska" and tick() - lastTierCheck >= 3 then
+                    lastTierCheck = tick()
+                    if getConfigForLevel(getPlayerLevel()).PathToRobo then
+                        notify("Auto Farm", "Level 190 with Geppo - leaving Gravito for Fishman Island...", 3)
+                        hasQuest = false
+                        break
+                    end
+                end
+
+                -- World Scroll: the moment the target level is reached on the Fishman tier, stop
+                -- farming. The code after this loop skips the walk back to the quest NPC and the
+                -- next cycle starts the gate -> scroll -> teleport run.
+                if activeQuestConfig.PathToRobo and tick() - lastScrollCheck >= 3 then
+                    lastScrollCheck = tick()
+                    if worldScrollWanted() then
+                        notify("Auto Farm", "Level reached - leaving Fishman Island for the World Scroll...", 3)
+                        leavingForScroll = true
+                        hasQuest = false
+                        break
+                    end
+                end
+
+                local char = player.Character
+                if not char or not char:FindFirstChild("HumanoidRootPart") then task.wait(0.2) continue end
+                local hrp = char.HumanoidRootPart
+                local cfg = activeQuestConfig
+                local maxAgg = cfg.MaxAggro      -- the ball size for THIS tier
+                local isKriegTier = string.find(string.lower(cfg.TargetMobName), "krieg")
+                local function hoverPointFor(r)
+                    return isKriegTier and Vector3.new(r.Position.X, 5.6, r.Position.Z) or (r.Position + hoverOffset())
+                end
+
+                ----------------------------------------------------------------- GATHER
+                if phase == "GATHER" then
+                    fightPhase = false
+                    if #aggroedTargets >= maxAgg then
+                        phase = "FIGHT"
+                    else
+                        if not (aggroTarget and isValidTargetMob(aggroTarget, cfg) and not isAlreadyAggroed(aggroTarget)) then
+                            aggroTarget = getUnaggroedMob(cfg)
+                            aggroStart, tourArrivedAt = tick(), nil
+                            local hum = aggroTarget and aggroTarget:FindFirstChildOfClass("Humanoid")
+                            tourHp = hum and hum.Health
+                        end
+                        local r = aggroTarget and (aggroTarget:FindFirstChild("HumanoidRootPart") or aggroTarget.PrimaryPart)
+                        if r then
+                            activeTargetHrp = r
+                            local hum = aggroTarget:FindFirstChildOfClass("Humanoid")
+                            -- pulled the moment its health drops, even if the m1 loop
+                            -- reached it before we got all the way over it
+                            local landed = hum and tourHp and hum.Health < tourHp
+                            local arrived = (hoverPointFor(r) - hrp.Position).Magnitude <= ARRIVE_THRESHOLD + 1
+                            if arrived and not tourArrivedAt then tourArrivedAt = tick() end
+                            if landed or (tourArrivedAt and tick() - tourArrivedAt > ATK.TOUR_WAIT) then
+                                table.insert(aggroedTargets, aggroTarget)
+                                aggroTarget, tourArrivedAt, tourHp = nil, nil, nil
+                            elseif not arrived and tick() - aggroStart > ATK.AGGRO_TIMEOUT then
+                                aggroTarget = nil    -- cannot reach it; pick another
+                            end
+                        elseif #aggroedTargets > 0 then
+                            phase = "FIGHT"          -- nothing fresh left
+                        else
+                            activeTargetHrp = nil
+                            task.wait(0.2)
+                        end
+                    end
+
+                ------------------------------------------------------------------ FIGHT
+                else
+                    -- kill EVERY pulled mob before pulling more (no topping the ball up at
+                    -- GATHER_FLOOR any more: it left the last 2 wolves alive to go pull 6 new ones)
+                    local wantMore = #aggroedTargets == 0
+
+                    if wantMore then
+                        lockedMob, activeTargetHrp = nil, nil
+                        fixedHoverPos = nil     -- pack dead: leave the fight spot and pull again
+                        fightPhase = false
+                        phase = "GATHER"
+                    else
+                        -- FightSpot: the whole pack is pulled -> straight tween to the spot (at the
+                        -- normal hover height) once, then the hover engine holds it while we kill them
+                        if cfg.FightSpot and not fixedHoverPos then
+                            local spot = cfg.FightSpot + hoverOffset()
+                            print(string.format("[quest6] %d pulled - straight tween to the fight spot", #aggroedTargets))
+                            activeTargetHrp = nil
+                            straightLineTween(spot, TRAVEL_SPEED)
+                            fixedHoverPos = spot
+                        end
+                        local victim = nil
+                        if cfg.PriorityNames then
+                            for _, m in ipairs(aggroedTargets) do
+                                if isValidTargetMob(m, cfg) and isPriorityMob(m, cfg) then victim = m break end
+                            end
+                        end
+                        if not victim then
+                            for _, m in ipairs(aggroedTargets) do  -- pull order: the first one still alive
+                                if isValidTargetMob(m, cfg) then victim = m break end
+                            end
+                        end
+                        if victim ~= lockedMob then
+                            lockedMob = victim
+                            if victim then
+                                print(string.format("[quest4] hovering on %s%s", victim.Name, isPriorityMob(victim, cfg) and " (priority)" or ""))
+                            end
+                        end
+                        activeTargetHrp = victim and (victim:FindFirstChild("HumanoidRootPart") or victim.PrimaryPart)
+                        fightPhase = activeTargetHrp ~= nil
+                    end
+                end
+
+                task.wait()
+            end
+            fightPhase = false
+
+            aggroedTargets = {}
+            activeTargetHrp = nil
+            fixedHoverPos = nil
+            fightPhase = false
+            stopHoverPhysics()
+
+            if leavingForScroll then continue end   -- the World Scroll run quits the quest itself
+
+            routeToQuestNPC(activeQuestConfig, true)
+            task.wait(0.5)
+
+            local properConfigForLevel = getConfigForLevel(getPlayerLevel())
+            if properConfigForLevel.QuestName ~= activeQuestConfig.QuestName then
+                pcall(function() ReplicatedStorage.Events.Quest:InvokeServer({ "quit" }) end)
+                task.wait(0.5)
+
+                -- Leaving Gravito for Fishman: the way out of the room is Waypoint 2 -> quest NPC
+                -- (done above) -> Waypoint 1. Be at Waypoint 1 before the Fishman path starts.
+                if activeQuestConfig.QuestName == "Help Miska" and properConfigForLevel.PathToRobo and activeQuestConfig.Waypoint1 then
+                    straightLineTween(activeQuestConfig.Waypoint1, TRAVEL_SPEED)
+                end
+            end
+        end
+    end)
+end
+
+--------------------------------------------------------------------------------
+-- CONDITIONAL ROUTER
+--------------------------------------------------------------------------------
+if game.PlaceId == 3978370137 or game.PlaceId == 7465136166 then
+    -- sea 1 / sea 2: wait for the loading screen to disappear, then farm
+    task.spawn(function()
+        waitForLoadingScreen()
+        executeFirstPlaceSequence()
+    end)
+elseif game.PlaceId == 1730877806 then
+    -- lobby: private server code -> Regular -> Second Sea. No loading wait here. Once per server (JobId).
+    if getgenv().__LobbySeqJob ~= game.JobId then
+        getgenv().__LobbySeqJob = game.JobId
+        task.spawn(executeSecondPlaceSequence)
+    end
+end
