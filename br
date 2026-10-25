@@ -44,6 +44,10 @@ do
 	g.KrakenConfig.BossRotation.MerchantCheckItems = {
 		["Mythical Fruit Chest"] = true,
 		["Spare Fruit Bag"] = true,
+        ["Pika"] = true,
+        ["Goro"] = true,
+        ["Traveling Merchant Snail Phone"] = true,
+        ["Legendary Fish Bait"] = true
 	}
 
 	-- Traveling Merchant stock report goes here (user, 2026-10-24)
