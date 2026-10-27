@@ -1,6 +1,81 @@
 -- boss rotation launcher: the source below reads BossRotation.Enabled only once
 -- at launch, so the panel's "Run the rotation" toggle can't start it afterwards.
 -- execute -> rotation starts; press Y -> stops cleanly (execute again to restart)
+
+-- mute GPO's anti-cheat reports (as impel1 does; user, 2026-10-26): its hidden Actor reports every
+-- detection, including every uncaught executor error (code 691), through
+-- ReplicatedStorage.Crab_Strangler. Destroyed now and whenever one appears later; a client-side
+-- Destroy doesn't replicate. g.KrakenCrabMuted counts how many were removed and g.KrakenCrabTimes
+-- keeps the last 20 removal times (os.clock), for checking.
+-- The game puts a NEW one back after the first is removed, and it got past the ChildAdded check
+-- (2026-10-26: muted 1, one still there, listener connected) -- most likely it's added under
+-- another name and renamed after. So every new child is also watched for a rename, and a sweep
+-- every 0.5s catches anything else.
+do
+	local g = getgenv and getgenv() or {}
+	local RSm = game:GetService("ReplicatedStorage")
+	local runId = {}
+	g.KrakenCrabMuteRun = runId -- a newer execute takes over; this copy's sweep then stops
+	local function mute(r)
+		if r and r.Name == "Crab_Strangler" and r:IsA("BaseRemoteEvent") then
+			pcall(function()
+				r:Destroy()
+				g.KrakenCrabMuted = (tonumber(g.KrakenCrabMuted) or 0) + 1
+				g.KrakenCrabTimes = g.KrakenCrabTimes or {}
+				table.insert(g.KrakenCrabTimes, os.clock())
+				if #g.KrakenCrabTimes > 20 then
+					table.remove(g.KrakenCrabTimes, 1)
+				end
+			end)
+		end
+	end
+	local function sweep()
+		for _, c in ipairs(RSm:GetChildren()) do
+			if c.Name == "Crab_Strangler" then
+				mute(c)
+			end
+		end
+	end
+	pcall(function()
+		sweep()
+		for _, key in ipairs({ "KrakenCrabMuteConn", "KrakenCrabRenameConn" }) do
+			if g[key] then
+				pcall(function()
+					g[key]:Disconnect()
+				end)
+			end
+		end
+		g.KrakenCrabMuteConn = RSm.ChildAdded:Connect(function(c)
+			pcall(function()
+				mute(c)
+				if c.Parent and c:IsA("BaseRemoteEvent") then
+					-- added under another name: catch it the moment it's renamed
+					local conn
+					conn = c:GetPropertyChangedSignal("Name"):Connect(function()
+						pcall(function()
+							if c.Name == "Crab_Strangler" then
+								conn:Disconnect()
+								mute(c)
+							end
+						end)
+					end)
+					task.delay(30, function()
+						pcall(function()
+							conn:Disconnect()
+						end)
+					end)
+				end
+			end)
+		end)
+	end)
+	task.spawn(function()
+		while g.KrakenCrabMuteRun == runId do
+			task.wait(0.5)
+			pcall(sweep)
+		end
+	end)
+end
+
 do
 	local g = getgenv and getgenv() or {}
 
@@ -47,7 +122,7 @@ do
         ["Pika"] = true,
         ["Goro"] = true,
         ["Traveling Merchant Snail Phone"] = true,
-        ["Legendary Fish Bait"] = true
+        ["Legendary Fish Bait"] = false
 	}
 
 	-- Traveling Merchant stock report goes here (user, 2026-10-24)
@@ -63,6 +138,9 @@ do
 		["Whatthehellbruvv"] = "nQbUujgVxX",
 		["Whatthehellbruvvv"] = "V3uZmZbDIx",
 		["Whatthehellbruvvvv"] = "M2HWLiU46A",
+        ["Watduhellbruv"] = "AHRBMiMpAt",
+        ["Watduhellbruvv"] = "8QQwmZVWU2",
+        ["Llinaratostape"] = "DYhuvAAD4w"
 	}
 	local MENU_PLACE_ID = 1730877806
 
@@ -4331,8 +4409,9 @@ local function createAutoMerchant()
 		-- the real names: each row in the shop's item list is named after its item (findItemRow
 		-- buys by exactly these names). The old way below only recognised the 37 hand-written
 		-- names in knownItems, so anything new or renamed never reached the stock report.
-		local list = merchantShop:FindFirstChild("List")
-		list = list and list:FindFirstChild("List")
+		-- same path fix as getItemList: the list is under Main (dumped 2026-10-25)
+		local list = merchantShop:FindFirstChild("Main")
+		list = list and list:FindFirstChild("List") or merchantShop:FindFirstChild("List")
 		list = list and (list:FindFirstChild("Redeemables") or list)
 
 		for _, row in ipairs(list and list:GetChildren() or {}) do
@@ -4649,6 +4728,18 @@ local function createAutoMerchant()
 			return row.AbsolutePosition.Y >= scroller.AbsolutePosition.Y and row.AbsolutePosition.Y + row.AbsoluteSize.Y <= scroller.AbsolutePosition.Y + scroller.AbsoluteSize.Y
 		end
 
+		-- deterministic first: write the row's canvas offset straight into CanvasPosition
+		-- (Roblox clamps it to the valid range itself). The wheel-event path alone never got
+		-- here in the merchant shop -- "row off screen" every visit, nothing ever bought
+		-- (2026-10-25). The wheel loop below stays as the fallback.
+		if not isVisible() then
+			pcall(function()
+				local target = row.AbsolutePosition.Y - scroller.AbsolutePosition.Y + scroller.CanvasPosition.Y
+				scroller.CanvasPosition = Vector2.new(scroller.CanvasPosition.X, math.max(0, target))
+				task.wait(0.1)
+			end)
+		end
+
 		for i = 1, 12 do
 			if isVisible() then return true end
 			local x, y = getGuiCenter(scroller)
@@ -4682,9 +4773,14 @@ local function createAutoMerchant()
 
 	-- reading the item list and buying
 	local function getItemList(shopGui)
-		local list = shopGui:FindFirstChild("List")
-		list = list and list:FindFirstChild("List")
-		return list and list:FindFirstChild("Redeemables") or list
+		-- the real tree (dumped live, 2026-10-25): MerchentShop.Main.List (ScrollingFrame) ->
+		-- Redeemables (Frame) -> item rows. The old lookup started at MerchentShop.List -- one
+		-- level short -- so it returned nil every time, isShopListReady never fired, and no
+		-- item could ever be found or bought.
+		local main = shopGui:FindFirstChild("Main")
+		local list = (main and main:FindFirstChild("List")) or shopGui:FindFirstChild("List")
+		list = list and list:FindFirstChild("List") or list
+		return list and (list:FindFirstChild("Redeemables") or list)
 	end
 
 	local function findItemRow(shopGui, itemName)
@@ -4711,6 +4807,15 @@ local function createAutoMerchant()
 				local text = tostring(descendant.Text or "")
 				local current, total = text:match("(%d+)%s*/%s*(%d+)")
 				return tonumber(current), tonumber(total), text
+			end
+		end
+
+		-- the live rows don't name their stock label "Value" (dump 2026-10-25): fall back to
+		-- any label carrying the "n / m" stock text ("Stok: 2/2" localized or not)
+		for _, descendant in ipairs(row:GetDescendants()) do
+			if descendant:IsA("TextLabel") or descendant:IsA("TextButton") then
+				local current, total = tostring(descendant.Text or ""):match("(%d+)%s*/%s*(%d+)")
+				if current and total then return tonumber(current), tonumber(total), tostring(descendant.Text) end
 			end
 		end
 
@@ -5012,7 +5117,8 @@ local function createAutoMerchant()
 		-- sprinting while standing at the shop). The trip there is the Goro trip, which keeps
 		-- its own noclip for the flight only.
 		local function teleportNear(position)
-			state.Teleport(position + Vector3.new(0, 3, 3))
+			-- stop 1 stud from the merchant NPC, not 3 back and 3 up (user, 2026-10-26)
+			state.Teleport(position + Vector3.new(0, 3, 1))
 		end
 
 		teleportNear(targetPos)
@@ -5039,7 +5145,7 @@ local function createAutoMerchant()
 					state.Notify("Merchant", "Merchant left before we could reach it.", 3)
 					break
 				else
-					if rootPart and (rootPart.Position - currentPos).Magnitude > 10 then
+					if rootPart and (rootPart.Position - currentPos).Magnitude > 2 then
 						teleportNear(currentPos)
 					end
 
@@ -5087,7 +5193,7 @@ local function createAutoMerchant()
 			end
 
 			if boughtAny then
-				state.Notify("Merchant", "No items found.", 5)
+				state.Notify("Merchant", "Merchant buy run complete.", 3)
 			else
 				state.Notify("Merchant", "No selected items were bought.", 3)
 			end
@@ -6371,6 +6477,10 @@ local function createTravel()
 
 		-- only an ender back means the server took the cast
 		if not ok or typeof(ender) ~= "Instance" then
+			-- a refused cast can leave facingMouse latched server-side, which freezes stamina
+			-- regen and makes every retry refuse too -- clear it unconditionally
+			-- (gpo-facemouse rule, hit live 2026-10-25/26)
+			pcall(function() setFaceMouse(false) end)
 			formReadyAt[kind] = os.clock() + FORM_RETRY_AFTER_REFUSAL
 			return false
 		end
@@ -6709,13 +6819,22 @@ local function createTravel()
 
 	-- boss rotation's main flyer: Lightning Form stays on between legs,
 	-- stopAllFlight fires the ender remote to turn it back off
-	api.moveWithGoroGoroToCFrame = function(target, speed, face)
+	api.moveWithGoroGoroToCFrame = function(target, speed, face, keepForm)
 		-- EVERY trip casts its own Lightning Form and ends it on arrival. Reusing a form across
 		-- trips flew at 350 without it: when the form runs out on its own its ender remote isn't
 		-- removed, so once stamina refilled the stale form looked "on" -- and that trip earned a
 		-- "TP Check: 164 your Threshold: 112" (2026-10-23). It also left the form draining
 		-- stamina while we idled at the Thriller Bark board.
-		releaseFlightForm()
+		-- EXCEPT a poster board -> boss hand-off (keepForm, user 2026-10-26): the board leg keeps
+		-- its form and the next leg reuses it -- only within 60s, and only if stamina never hit
+		-- empty meanwhile (that's when the form ends on its own and goes stale). Unused after 60s
+		-- it's ended.
+		local held = api.heldGoroForm
+		api.heldGoroForm = nil
+		local reuse = held ~= nil and not held.broken and os.clock() - held.at < 60 and flightFormActive("Goro")
+		if not reuse then
+			releaseFlightForm()
+		end
 
 		-- never travel without Lightning Form: one retry, then stay put
 		if not ensureFlightForm("Goro", 2) then
@@ -6731,7 +6850,28 @@ local function createTravel()
 		-- noclip instead of climbing over, no slow-down when hurt
 		local arrived = flyFormLeg(target, { speed = tonumber(speed) or 350, mode = "linear", noclip = true, fullSpeed = true, requireForm = "Goro" })
 
-		releaseFlightForm()
+		if keepForm and arrived and flightFormActive("Goro") then
+			local h = { at = os.clock() }
+			api.heldGoroForm = h
+			task.spawn(function()
+				pcall(function()
+					while api.heldGoroForm == h and os.clock() - h.at < 60 do
+						local stamina = playerStats:FindFirstChild("Stamina")
+						if stamina and stamina.Value <= 1 then
+							h.broken = true -- ran dry: the form ended on its own, never reuse it
+						end
+						task.wait(0.1)
+					end
+					if api.heldGoroForm == h then
+						-- nobody took it over in 60s: end it (it drains stamina)
+						api.heldGoroForm = nil
+						releaseFlightForm()
+					end
+				end)
+			end)
+		else
+			releaseFlightForm()
+		end
 		return arrived
 	end
 
@@ -11627,8 +11767,17 @@ local function createBossRotation()
 				-- like Roger / Hawk Eye -- scheduled via spawnMinutes, no poster needed. The old
 				-- board-driven flow (needsPoster) caused the empty filler board trips.
 				boards = { "Thriller Bark", "Impel Down" },
-				keyword = "soul king",
-				needsPoster = false,
+				-- ONE boss with a chance to roll Rockstar (user, 2026-10-25): this entry finds and
+				-- fights either form. "Soul King (Rockstar)" below is never scheduled or lapped on
+				-- its own -- selecting it just selects this one.
+				keyword = { "soul king", "rockstar" },
+				-- poster back on, but optional (user, 2026-10-26): a board that lists it (or hasn't been
+				-- read yet) is visited first for the poster, then the fight goes ahead either way --
+				-- the hourly fight is never skipped for a missing poster
+				needsPoster = true,
+				posterOptional = true,
+				-- always stop at this board for his poster before the fight ("always grab his bounty")
+				posterBoard = "Impel Down",
 			},
 			["Soul King (Rockstar)"] = {
 				spawn = CFrame.new(5066.88721, 114.085663, -11817.7451, 0.0261754654, 0.815547526, -0.57809782, -7.70475452e-08, 0.578295946, 0.815827072, 0.999657393, -0.0213546082, 0.0151372291),
@@ -11698,7 +11847,8 @@ local function createBossRotation()
 
 		-- Hawk Eye first when both are due: they share Umi Island and overlap 4x a day
 		-- (minutes 120 / 480 / 840 / 1200) -- user, 2026-10-24
-		local timedBosses = { "Hawk Eye", "Roger", "Soul King", "Soul King (Rockstar)" }
+		-- (Soul King once: Rockstar is the same boss -- his "Soul King" entry covers both forms)
+		local timedBosses = { "Hawk Eye", "Roger", "Soul King" }
 		local isTimedBoss = {}
 
 		for _, name in ipairs(timedBosses) do
@@ -11708,10 +11858,9 @@ local function createBossRotation()
 		local spawnMinutes = {
 			Roger = { 30, 120, 210, 300, 390, 480, 570, 660, 750, 840, 930, 1020, 1110, 1200, 1290, 1380 },
 			["Hawk Eye"] = { 0, 120, 240, 360, 480, 600, 720, 840, 960, 1080, 1200, 1320 },
-			-- Soul King: every hour on the hour (user, 2026-10-25). If he actually spawns at a
-			-- different minute of the hour, shift both lists (they must stay identical).
+			-- Soul King (either form): every hour on the hour (user, 2026-10-25). Respawn
+			-- cooldowns: Soul King 60 min, Roger 90, Hawk Eye 120 -- these lists follow them.
 			["Soul King"] = { 0, 60, 120, 180, 240, 300, 360, 420, 480, 540, 600, 660, 720, 780, 840, 900, 960, 1020, 1080, 1140, 1200, 1260, 1320, 1380 },
-			["Soul King (Rockstar)"] = { 0, 60, 120, 180, 240, 300, 360, 420, 480, 540, 600, 660, 720, 780, 840, 900, 960, 1020, 1080, 1140, 1200, 1260, 1320, 1380 },
 		}
 
 		-- ray directions used to stay under ceilings and away from walls
@@ -11905,7 +12054,8 @@ local function createBossRotation()
 					{ key = "uptime", label = "Uptime", format = statsGui.FormatClock },
 					{ key = "status", label = "Status", color = Color3.fromRGB(220, 214, 102) },
 					{ key = "kills", label = "Kills" },
-					{ key = "fruits", label = "Fruits" },
+					{ key = "pity", label = "Fruit" },
+					{ key = "bounty", label = "Bounty", color = Color3.fromRGB(126, 220, 126) },
 				},
 			}
 			local ok, panelOrErr = pcall(statsGui.new, panelOptions)
@@ -12017,8 +12167,9 @@ local function createBossRotation()
 			Travel.moveWithSkyStringsToCFrame(target, (tonumber(bossRotation.SkyStringsSpeed) or 140) * speedFactor, tonumber(bossRotation.SkyStringsWarmup), tonumber(bossRotation.SkyStringsRecastInterval), nil)
 		end
 
-		local function flyWithGoro(target, speedFactor)
-			return Travel.moveWithGoroGoroToCFrame(target, (tonumber(bossRotation.GoroGoroSpeed) or 350) * speedFactor, nil)
+		-- keepForm: a poster board leg hands its Lightning Form on to the boss leg (see moveWithGoroGoroToCFrame)
+		local function flyWithGoro(target, speedFactor, keepForm)
+			return Travel.moveWithGoroGoroToCFrame(target, (tonumber(bossRotation.GoroGoroSpeed) or 350) * speedFactor, nil, keepForm)
 		end
 
 		-- stand still until stamina is full: there's no max-stamina value to read, so "full"
@@ -12066,6 +12217,11 @@ local function createBossRotation()
 		local function bossSearchSeconds(bossName)
 			local minutes = spawnMinutes[bossName]
 			if not minutes then return 30 end
+
+			-- world bosses (Hawk Eye / Roger / Soul King): 30s waiting at the spawn, then they're
+			-- gone -- no camping it for the rest of the window (user, 2026-10-25). A miss stays
+			-- due and is retried on the next pass while the window is open.
+			if isTimedBoss[bossName] then return 30 end
 
 			local window = tonumber(bossRotation.PriorityWindowMinutes) or TIMED_WINDOW_DEFAULT
 			local nowSeconds = DateTime.now().UnixTimestamp
@@ -12261,7 +12417,81 @@ local function createBossRotation()
 				elseif method == "Primal" then
 					flyWithPrimal(cframe, speedFactor())
 				else
-					flyWithGoro(cframe, speedFactor())
+					-- stamina-hold flight (user, 2026-10-26): if Lightning Form dies mid-leg
+					-- (stamina out), hover mid-air on Sky Walk2 taps every 2.5s -- above the
+					-- water, out of shark range -- while stamina regens, then continue when
+					-- Lightning Form casts again. Max 5 attempts.
+					local arrived = false
+					local tries = 0
+
+					while not arrived and tries < 5 do
+						tries += 1
+
+						local okFly, flyResult = pcall(function()
+							return flyWithGoro(cframe, speedFactor())
+						end)
+
+						arrived = okFly and flyResult == true
+
+						if not arrived and tries < 5 then
+							log("Merchant flight stalled - hovering on the pad to regen stamina (attempt " .. tries .. ").")
+
+							-- PAD HOVER (user, 2026-10-26): the same pad + Sky Walk taps every 2s as
+							-- the melee hover -- measured 0 strikes ("pad + geppo every 2.0/2.5/3.0s"
+							-- in the strike tests). The character stands on the pad so they can't
+							-- sink into the water, stamina regens while standing, and the resumed
+							-- flight lifts off from the pad = a standing start = strike-free.
+							local holdChar = localPlayer.Character
+							local holdRoot = holdChar and holdChar:FindFirstChild("HumanoidRootPart")
+
+							if not holdRoot then
+								log("No character for the pad hover - skipping the hold.")
+								return false
+							end
+
+							local holdPad = Instance.new("Part")
+							holdPad.Name = "MerchantHoldPad"
+							holdPad.Size = Vector3.new(10, 1, 10)
+							holdPad.Anchored = true
+							holdPad.CanCollide = true
+							holdPad.Transparency = 1
+
+							-- never spawn below Y 6: the pad surface stays above the water line so
+							-- the hold can't end with the character swimming (user, 2026-10-26)
+							local padY = math.max(holdRoot.Position.Y - 3, 6)
+
+							holdPad.Position = Vector3.new(holdRoot.Position.X, padY, holdRoot.Position.Z)
+							holdPad.Parent = workspace
+
+							local holdEnd = os.clock() + 90
+
+							local pinConn = RunService.Heartbeat:Connect(function()
+								pcall(function()
+									local c = localPlayer.Character
+									local r = c and c:FindFirstChild("HumanoidRootPart")
+
+									if r and (r.Position - holdPad.Position).Magnitude > 6 then
+										r.CFrame = CFrame.new(holdPad.Position + Vector3.new(0, 4, 0))
+										r.AssemblyLinearVelocity = Vector3.zero
+									end
+								end)
+							end)
+
+							while os.clock() < holdEnd do
+								-- the Sky Walk2 remote cast every 2s is what keeps the flight-strike
+								-- check satisfied while the pad holds the character up
+								-- (user, 2026-10-26) -- pad + cast = the proven 0-strike hover
+								pcall(function()
+									ReplicatedStorage.Events.Skill:InvokeServer("Sky Walk2")
+								end)
+
+								task.wait(2)
+							end
+
+							pinConn:Disconnect()
+							holdPad:Destroy()
+						end
+					end
 				end
 			end,
 			Notify = function(title, message)
@@ -12462,16 +12692,26 @@ local function createBossRotation()
 				end
 
 				tripBoard = listedOn or unknownOn
+				if boss.posterBoard then
+					-- ALWAYS this board first (Soul King -> Impel Down, user 2026-10-26), unless another
+					-- board is known to list it: it's re-read on arrival and the poster grabbed if there
+					tripBoard = listedOn or boss.posterBoard
+				end
 
 				if not tripBoard then
-					logNotSpawned(bossName, table.concat(bossBoards(boss), " / "))
-					return false
+					-- posterOptional (Soul King, timed): no board lists it -> no board trip, but the
+					-- fight still goes ahead
+					if not boss.posterOptional then
+						logNotSpawned(bossName, table.concat(bossBoards(boss), " / "))
+						return false
+					end
 				end
 			end
 
 			passTraveled = true
 
-			local needPoster = boss.needsPoster and bossRotation.AutoGrabPosters ~= false and #missingPosters(posterNames) > 0
+			local needPoster = boss.needsPoster and tripBoard ~= nil and bossRotation.AutoGrabPosters ~= false
+				and #missingPosters(posterNames) > 0
 
 			if needPoster then
 				local boardPos = boardPositions[tripBoard]
@@ -12487,7 +12727,7 @@ local function createBossRotation()
 					elseif method == "Primal" then
 						flyWithPrimal(boardPos, speedFactor)
 					else
-						flyWithGoro(boardPos, speedFactor)
+						flyWithGoro(boardPos, speedFactor, true) -- the form carries on to the boss
 					end
 
 					if not shouldContinue() then return false end
@@ -12498,11 +12738,9 @@ local function createBossRotation()
 						return false
 					end
 
-					-- Impel Down board: Lightning Form off straight away so stamina refills while we're
-					-- here; after the posters we wait for a full bar before the next trip (user, 2026-10-23)
-					local refillHere = tripBoard == "Impel Down"
-
-					if refillHere then Travel.endTravelFlight() end
+					-- (no Lightning Form stop / stamina refill at any board any more: it grabs the posters
+					-- and flies straight on to the boss with the form still on -- user, 2026-10-26; was
+					-- the Impel Down board with < 300 stamina)
 
 					if pauseAntiAfk then pauseAntiAfk() end
 
@@ -12598,8 +12836,6 @@ local function createBossRotation()
 					log(string.format("Board: got %d of %d posters in %d attempt(s)%s", #wanted - #stillMissing, #wanted, attempts,
 						#stillMissing > 0 and (" - missing " .. table.concat(stillMissing, ", ")) or ""))
 
-					if refillHere then waitForFullStamina(shouldContinue, tripBoard .. " board") end
-
 					if resumeAntiAfk then resumeAntiAfk() end
 				end
 			end
@@ -12609,7 +12845,10 @@ local function createBossRotation()
 			if boss.needsPoster then
 				local missing = missingPosters(posterNames)
 
-				if #missing > 0 then
+				if #missing > 0 and boss.posterOptional then
+					-- Soul King: on a fixed clock, fought with or without his poster
+					log(bossName .. ": no bounty poster (" .. table.concat(missing, ", ") .. ") - going anyway.")
+				elseif #missing > 0 then
 					-- the board we just read says it isn't there: not spawned
 					if posterStatus(missing[1], tripBoard) == false then
 						logNotSpawned(bossName, tripBoard)
@@ -12666,6 +12905,13 @@ local function createBossRotation()
 		end
 
 		local function equipTravelTool()
+			-- Lightning Form is a Goro skill: the fruit must be in hand for the trip, whatever
+			-- was held at launch (relaunches with the blade/Cyborg out left travel refusing,
+			-- 2026-10-26). Falls back to the launch tool.
+			if FruitInventory.setItemEquipped("Goro-Goro", true) then return end
+
+			if FruitInventory.setItemEquipped("Goro", true) then return end
+
 			if travelToolName then FruitInventory.setItemEquipped(travelToolName, true) end
 		end
 
@@ -13210,14 +13456,33 @@ local function createBossRotation()
 								if dodge then kind = DODGE_NAMES[id] or ("a skill (" .. id .. ")") end
 							end
 
-							if not kind or not track.IsPlaying then return end
+								if not kind or not track.IsPlaying then return end
 
-							dodgeUntil = os.clock() + DODGE_MAX
-							log(name .. " is casting " .. kind .. " - backing off " .. DODGE_DISTANCE .. " studs.")
+								-- per-move dodge styles (user, 2026-10-26): World's Strongest
+								-- Slash sends 3 darkness slashes forward -- close means hit by
+								-- ALL of them, so dodge FAR (toward the island edge). Nightfall
+								-- Rush is a horizontal rush -- go UP instead of sideways.
+								dodgeStyle = nil
 
-							track.Stopped:Connect(function()
-								dodgeUntil = math.min(dodgeUntil, os.clock() + DODGE_BUFFER)
-							end)
+								if DODGE_UP_IDS[id] then
+									dodgeStyle = "up"
+								elseif DODGE_FAR_IDS[id] then
+									dodgeStyle = "far"
+								end
+
+								dodgeUntil = os.clock() + (dodgeStyle == "up" and 8 or DODGE_MAX)
+
+								if dodgeStyle == "far" then
+									log(name .. " is casting " .. kind .. " - backing off FAR (160 studs).")
+								elseif dodgeStyle == "up" then
+									log(name .. " is casting " .. kind .. " - going up.")
+								else
+									log(name .. " is casting " .. kind .. " - backing off " .. DODGE_DISTANCE .. " studs.")
+								end
+
+								track.Stopped:Connect(function()
+									dodgeUntil = math.min(dodgeUntil, os.clock() + DODGE_BUFFER)
+								end)
 						end)
 					end)
 				end)
@@ -13346,44 +13611,57 @@ local function createBossRotation()
 					local dodging = not bossAway and lurePhase ~= "return" and os.clock() < dodgeUntil
 
 					if dodging then
-						if not dodgeOffset then
-							local away = Vector3.new(hrp.Position.X - mhrp.Position.X, 0, hrp.Position.Z - mhrp.Position.Z)
+						if dodgeStyle == "up" then
+							-- Nightfall Rush (user, 2026-10-26): straight up clears the horizontal
+							-- rush and its upward slash
+							dodgeOffset = Vector3.new(0, 60, 0)
+							targetPos = mhrp.Position + dodgeOffset + Vector3.new(0, MELEE_HOVER_OFFSET.Y, 0)
+							padSpeed = DODGE_SPEED
+							hoverLocked = false
+						else
+							if not dodgeOffset then
+								local away = Vector3.new(hrp.Position.X - mhrp.Position.X, 0, hrp.Position.Z - mhrp.Position.Z)
 
-							if away.Magnitude < 1 then
-								local look = mhrp.CFrame.LookVector
-								away = Vector3.new(-look.X, 0, -look.Z)
-							end
-
-							away = away.Magnitude > 0.01 and away.Unit or Vector3.new(0, 0, 1)
-							local from = mhrp.Position + Vector3.new(0, MELEE_HOVER_OFFSET.Y, 0)
-
-							-- first direction (away first, then turning) with solid footing out there and
-							-- a clear line to it; 70 studs, else 50, else 35
-							for _, distance in ipairs({ DODGE_DISTANCE, 50, 35 }) do
-								for _, angle in ipairs({ 0, 45, -45, 90, -90, 135, -135, 180 }) do
-									local dir = CFrame.Angles(0, math.rad(angle), 0) * away
-									local spot = from + dir * distance
-									local ground = workspace:Raycast(spot, Vector3.new(0, -60, 0), params)
-									local solid = ground and ground.Material ~= Enum.Material.Water
-
-									if solid and not workspace:Raycast(from, dir * distance, params) then
-										dodgeOffset = dir * distance
-										break
-									end
+								if away.Magnitude < 1 then
+									local look = mhrp.CFrame.LookVector
+									away = Vector3.new(-look.X, 0, -look.Z)
 								end
 
-								if dodgeOffset then break end
+								away = away.Magnitude > 0.01 and away.Unit or Vector3.new(0, 0, 1)
+								local from = mhrp.Position + Vector3.new(0, MELEE_HOVER_OFFSET.Y, 0)
+
+								-- first direction (away first, then turning) with solid footing out there and
+								-- a clear line to it; World's Strongest Slash goes far (160/120/90 -- its 3
+								-- slashes punish close dodges), everything else 70/50/35
+								local ladder = dodgeStyle == "far" and { 160, 120, 90 } or { DODGE_DISTANCE, 50, 35 }
+
+								for _, distance in ipairs(ladder) do
+									for _, angle in ipairs({ 0, 45, -45, 90, -90, 135, -135, 180 }) do
+										local dir = CFrame.Angles(0, math.rad(angle), 0) * away
+										local spot = from + dir * distance
+										local ground = workspace:Raycast(spot, Vector3.new(0, -60, 0), params)
+										local solid = ground and ground.Material ~= Enum.Material.Water
+
+										if solid and not workspace:Raycast(from, dir * distance, params) then
+											dodgeOffset = dir * distance
+											break
+										end
+									end
+
+									if dodgeOffset then break end
+								end
+
+								-- nowhere solid: the straight-away at the first ladder distance
+								dodgeOffset = dodgeOffset or away * ladder[1]
 							end
 
-							-- nowhere solid: the straight-away 70 as before
-							dodgeOffset = dodgeOffset or away * DODGE_DISTANCE
+							targetPos = mhrp.Position + dodgeOffset + Vector3.new(0, MELEE_HOVER_OFFSET.Y, 0)
+							padSpeed = DODGE_SPEED
+							hoverLocked = false
 						end
-
-						targetPos = mhrp.Position + dodgeOffset + Vector3.new(0, MELEE_HOVER_OFFSET.Y, 0)
-						padSpeed = DODGE_SPEED
-						hoverLocked = false
 					else
 						dodgeOffset = nil
+						dodgeStyle = nil
 					end
 
 					local toGoal = targetPos - Vector3.new(0, PAD_STAND, 0) - pad.Position
@@ -13474,7 +13752,44 @@ local function createBossRotation()
 			local ok, err = pcall(function()
 				local combo, lastHit, jitter, jitterAt, busoAt = 1, 0, 0, 0, os.clock()
 				local crossSlashReadyAt = 0
+				-- the SECOND block breaker (below) goes by the fighting style (user, 2026-10-25):
+				--   Cyborg       -> Laser Pulsar (14s cd + slack, 30 stamina)
+				--   Basic Combat -> Gut Punch    (15s cd + slack, 10 stamina; style reads "")
+				--   anything else -> none (no refused casts: Laser on a Basic Combat account was
+				--   refused 3x every fight, ~6s lost each time)
+				-- The laser* names below are the breaker's state, whichever skill it is.
+				local fightingStyle = ""
+				pcall(function()
+					fightingStyle = tostring(ReplicatedStorage["Stats" .. localPlayer.Name].Stats.FightingStyle.Value)
+				end)
+				local breaker = (fightingStyle == "Cyborg" and "Laser Pulsar")
+					or ((fightingStyle == "" or fightingStyle == "Basic Combat" or fightingStyle == "Melee") and "Gut Punch")
+					or nil
+				local LASER_CD = breaker == "Gut Punch" and (15 + SKILL_SLACK) or ((tonumber(skills.LaserPulsarCooldown) or 14) + SKILL_SLACK)
+				local LASER_STAM = breaker == "Gut Punch" and 10 or 30
+				local laserReadyAt, laserRefusals = 0, 0
+				local laserEnabled = breaker ~= nil and bossRotation.CounterBlocking ~= false
 				local remote = ReplicatedStorage:WaitForChild("Events"):WaitForChild("CombatRegister")
+
+				-- Gut Punch the way Basic Combat's own E does it (SkillCallbacks.FistStyles.Melee):
+				-- StamRequest, the swing, then Skill("Gut Punch", { Target }) -- the game's client
+				-- names the target its hitbox touched; we name the boss. Verified live 2026-10-25 on
+				-- Watduhellbruvv: accepted with the Kraken Blade in hand AND from the 11-stud hover
+				-- (no Melee tool needed), no anti-cheat notice. The server returns nothing either way.
+				local function castGutPunch(target)
+					ReplicatedStorage.Events.StamRequest:InvokeServer("Gut Punch")
+
+					task.spawn(pcall, function()
+						remote:InvokeServer({ "swingsfx", "Melee", true })
+					end)
+
+					ReplicatedStorage.Events.Skill:InvokeServer("Gut Punch", { Target = target })
+					return true
+				end
+
+				if laserEnabled then
+					log("Second block breaker this fight: " .. breaker .. " (style " .. (fightingStyle == "" and "Basic Combat" or fightingStyle) .. ").")
+				end
 
 				-- lure "aggro" done: he's been hit once -> fly back to the leash centre
 				local function aggroLanded()
@@ -13504,11 +13819,90 @@ local function createBossRotation()
 
 						if done and took then
 							crossSlashReadyAt = os.clock() + crossSlashCooldown()
+							-- grace: give the slash time to land and break the block before Laser
+							-- Pulsar may go -- the block reads as up for a moment after the cast, so
+							-- the laser fired 1s behind every slash (user, 2026-10-25)
+							laserReadyAt = math.max(laserReadyAt, os.clock() + 3)
 							log(name .. " is blocking - cast " .. CROSS_SLASH.name .. ".")
 							aggroLanded()
 						else
 							crossSlashReadyAt = os.clock() + SKILL_RETRY
 							log(CROSS_SLASH.name .. " refused (" .. (done and "server" or tostring(took)) .. ").")
+						end
+
+						lastHit = os.clock()
+						continue
+					end
+
+					-- still blocking with Cross Slash on cooldown (or short of stamina): the second
+					-- breaker (user, 2026-10-25) -- Laser Pulsar on Cyborg, Gut Punch on Basic Combat.
+					-- Cross Slash always goes first (above) when it's up. The server takes a remote
+					-- Laser Pulsar with the Kraken Blade in hand -- only the Cyborg fighting style is
+					-- needed (verified live 2026-10-25, Whatthehellbruvvvv). Abilities.laserPulsar aims
+					-- at him, charges 1s and releases at him.
+					if root and bossRoot and laserEnabled and os.clock() >= laserReadyAt and npcBlocking(bossModel)
+						and notOnErrorHold() and not character:FindFirstChild("Stun")
+						and (bossRoot.Position - root.Position).Magnitude <= MELEE_RANGE + 5
+						and (getStamina() or 0) >= LASER_STAM + STAM_RESERVE then
+						local done, took
+
+						if breaker == "Gut Punch" then
+							done, took = pcall(castGutPunch, bossModel)
+						else
+							done, took = pcall(Abilities.laserPulsar, bossModel)
+						end
+
+						if done and took then
+							laserReadyAt = os.clock() + LASER_CD
+							log(name .. " is blocking (Cross Slash on cd) - cast " .. breaker .. ".")
+							aggroLanded()
+
+							-- does it actually break the block? (Gut Punch into Ghost Princess's block
+							-- moved her only 2.9 studs in the test.) Watch 2s and log the answer.
+							local castAt = os.clock()
+
+							task.spawn(pcall, function()
+								while os.clock() - castAt < 2 do
+									task.wait(0.1)
+
+									if not npcBlocking(bossModel) then
+										log(string.format("%s dropped the block %.1fs after %s.", name, os.clock() - castAt, breaker))
+										return
+									end
+								end
+
+								log(name .. " still blocking 2s after " .. breaker .. ".")
+							end)
+						else
+							laserReadyAt = os.clock() + SKILL_RETRY
+							laserRefusals += 1
+							log(breaker .. " refused (" .. (done and "server" or tostring(took)) .. ").")
+
+							-- the server keeps saying no: stop trying this fight
+							if laserRefusals >= 3 then
+								laserEnabled = false
+								log(breaker .. " refused 3 times - off for this fight.")
+							end
+						end
+
+						-- Laser Pulsar only: the remote cast latches facingMouse server-side, which freezes
+						-- stamina AND health regen; one clear right after the release didn't take in the
+						-- test, so re-send until the attribute is really off (up to ~6s). Gut Punch isn't
+						-- an aimed skill (its own code never touches faceMouse).
+						if breaker == "Laser Pulsar" then
+							task.spawn(function()
+								for _ = 1, 8 do
+									task.wait(0.75)
+
+									pcall(function()
+										ReplicatedStorage.Events.faceMouse:FireServer(false)
+									end)
+
+									task.wait(0.25)
+									local current = localPlayer.Character
+									if not current or current:GetAttribute("facingMouse") ~= true then break end
+								end
+							end)
 						end
 
 						lastHit = os.clock()
@@ -13566,12 +13960,16 @@ local function createBossRotation()
 
 					-- all blocking: if Slayer Cross Slash can go right now, leave it to the cast at the
 					-- top of the loop; if it's on cooldown (or short of stamina), M1 into the block
-					-- instead of standing there (user, 2026-10-24)
+					-- for real instead of standing there (user, 2026-10-24; a fake-M1 feint was tried
+					-- and scrapped 2026-10-25)
 					if not target then
 						local crossSlashReady = os.clock() >= crossSlashReadyAt
 							and (getStamina() or 0) >= CROSS_SLASH.stam + STAM_RESERVE
+						-- (and Laser Pulsar, the second breaker -- also cast at the top)
+						local laserReady = laserEnabled and os.clock() >= laserReadyAt
+							and (getStamina() or 0) >= LASER_STAM + STAM_RESERVE
 
-						if crossSlashReady then continue end
+						if crossSlashReady or laserReady then continue end
 						target = targets[1]
 					end
 
@@ -13793,7 +14191,9 @@ local function createBossRotation()
 			local ok, err = pcall(function()
 				if attackMode == "Melee" then
 					-- Roger / Hawk Eye: dodge any skill (generic classifier) until we have their IDs
-					meleeFight(bossModel, name, shouldContinue, boss.spawn and boss.spawn.Position, isTimedBoss[bossName] == true,
+					-- (Soul King keeps his own Roar / Assault dodge, not Roger / Hawk's generic one)
+					meleeFight(bossModel, name, shouldContinue, boss.spawn and boss.spawn.Position,
+						isTimedBoss[bossName] == true and not isSoulKing(bossName),
 						boss.leashCenter and { center = boss.leashCenter, radius = boss.leashRadius, lure = boss.lureToLeash == true } or nil)
 					return
 				end
@@ -14010,7 +14410,10 @@ local function createBossRotation()
 			for _, name in ipairs(timedBosses) do
 				local minutes = spawnMinutes[name]
 
-				if selectedSet[name] and minutes then
+				-- (Soul King is also due when only his Rockstar form is ticked: same boss)
+				local picked = selectedSet[name] or (name == "Soul King" and selectedSet["Soul King (Rockstar)"])
+
+				if picked and minutes then
 					local since, spawnMinute = lastSpawnBefore(minutes, nowMinute)
 
 					-- the Soul King family cooldown (started on a kill or a missed search) also
@@ -14195,6 +14598,51 @@ local function createBossRotation()
 					return os.clock() - startedAt
 				end)
 
+				-- Fruit pity + session bounty (user, 2026-10-26): "Fruit" shows the live
+				-- FruitPity counter as "10/100 (+2)" -- the +N is how far it moved this session
+				-- (each world boss kill's guaranteed fruit is +1; the 100 -> 0 wrap is handled).
+				-- "Bounty" shows the session gain. getBounty() is from the kill webhook.
+				local pityStats = ReplicatedStorage:FindFirstChild("Stats" .. localPlayer.Name)
+				local pityValue = pityStats and pityStats.Stats and pityStats.Stats:FindFirstChild("FruitPity")
+				local pityStart
+
+				runStats.poll("pity", function()
+					if not pityValue then
+						pityStats = ReplicatedStorage:FindFirstChild("Stats" .. localPlayer.Name)
+						pityValue = pityStats and pityStats.Stats and pityStats.Stats:FindFirstChild("FruitPity")
+					end
+
+					if not pityValue then return "-/100" end
+
+					local now = pityValue.Value
+
+					if pityStart == nil then pityStart = now end
+
+					local gained = now - pityStart
+
+					if gained < 0 then gained += 100 end
+
+					return now .. "/100" .. (gained > 0 and " (+" .. gained .. ")" or "")
+				end)
+
+				local bountyStart = getBounty()
+
+				runStats.poll("bounty", function()
+					local gained = getBounty() - bountyStart
+					local sign = gained >= 0 and "+" or "-"
+					local out = tostring(math.abs(gained))
+
+					while true do
+						local head, tail = out:match("^(%d+)(%d%d%d)$")
+
+						if not head then break end
+
+						out = head .. "," .. tail
+					end
+
+					return sign .. out
+				end)
+
 				local function getServerAge()
 					local ok, result = pcall(function()
 						return localPlayer.PlayerGui.Display.ServerAge.Text
@@ -14294,13 +14742,22 @@ local function createBossRotation()
 							for _, bossName in ipairs(bosses) do
 								if not running or not isAlive() then break end
 
-								if isTimedBoss[bossName] then
+								-- timed bosses (and Rockstar, the same boss as Soul King) only go through
+								-- their schedule (dueTimedBosses), never the plain lap
+								if isTimedBoss[bossName] or isSoulKing(bossName) then
 									task.wait(1)
 								elseif not (isSoulKing(bossName) and soulKingOnCooldown()) then
 									attemptBoss(bossName, isAlive)
 								end
 
 								if running and isAlive() then
+									-- merchant check BEFORE the priority pass (user, 2026-10-26):
+									-- the check flies to the merchant and reads the stock, so it
+									-- must run right after a boss dies -- at the start of the
+									-- merchant's window -- not after a whole fight chain, or the
+									-- merchant despawns first (MFC missed 2026-10-26 19:02-19:20)
+									checkMerchant(isAlive)
+
 									for _, priorityBoss in ipairs(dueTimedBosses(bosses)) do
 										if not running or not isAlive() then break end
 
