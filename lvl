@@ -4,7 +4,7 @@ if game.PlaceId ~= 3978370137 and game.PlaceId ~= 1730877806 and game.PlaceId ~=
 
 getgenv().Config = {
     FPS = {
-        Cap = 20,
+        Cap = 40,
         -- true = stop RENDERING the 3D world entirely (blank screen). Far cheaper
         -- on CPU/GPU than a low cap, and it leaves the frame rate alone, so use it
         -- with a higher Cap if a low cap makes the farm miss its hits.
