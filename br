@@ -118,7 +118,7 @@ do
 	g.KrakenConfig.BossRotation.MerchantCheckEnabled = true
 	g.KrakenConfig.BossRotation.MerchantCheckItems = {
 		["Mythical Fruit Chest"] = true,
-		["Spare Fruit Bag"] = true,
+		["Spare Fruit Bag"] = false,
         ["Pika"] = true,
         ["Goro"] = true,
         ["Traveling Merchant Snail Phone"] = true,
@@ -134,8 +134,8 @@ do
 	-- any error popup (disconnect OR kick) teleports back to the main menu, autoexec runs this
 	-- again there, and it rejoins the private server.
 	local PRIVATE_SERVERS = {
-		["BRAVURAVALORIZ3QYLIO"] = "dQmY2kFDWn",
-		["Whatthehellbruvv"] = "nQbUujgVxX",
+		["imparalyzedstill"] = "dQmY2kFDWn",
+		["imparalyzedstill1"] = "nQbUujgVxX",
 		["Whatthehellbruvvv"] = "V3uZmZbDIx",
 		["Whatthehellbruvvvv"] = "M2HWLiU46A",
         ["Watduhellbruv"] = "AHRBMiMpAt",
@@ -165,7 +165,7 @@ do
 	-- or a graphics change. Checked every 2s and put back when it drifted (quest6's way). It
 	-- follows the QOL "FPS cap" slider (0 = off). setfpscap is the executor's own frame limiter,
 	-- outside the game: all the game can see is a steady 30 fps. No prints; every call pcalled.
-	g.KrakenConfig.QolFpsCap = 30
+	g.KrakenConfig.QolFpsCap = 20
 
 	if setfpscap then
 		local token = {}
